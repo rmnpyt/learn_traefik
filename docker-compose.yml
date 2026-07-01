@@ -1,24 +1,26 @@
 services:
   traefik-learn:
+    image: traefik-interactive-guide-traefik-learn
     build:
       context: .
       dockerfile: Dockerfile
     container_name: traefik-learn
     restart: unless-stopped
-    ports:
-      - "3089:3000"
+    expose:
+      - "3000"
     environment:
       - NODE_ENV=production
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     networks:
-      - traefik-learn-net
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.traefik-learn.rule=Host(`${TRAEFIK_LEARN_DOMAIN}`)
+      - traefik.http.routers.traefik-learn.entrypoints=websecure
+      - traefik.http.routers.traefik-learn.tls.certresolver=letsencrypt
+      - traefik.http.services.traefik-learn.loadbalancer.server.port=3000
 
 networks:
-  traefik-learn-net:
-    driver: bridge
+  proxy:
+    name: proxy
+    external: true
