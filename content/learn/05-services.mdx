@@ -1,0 +1,262 @@
+---
+title: Services & Load Balancing
+chapter: 5
+track: beginner
+difficulty: beginner
+description: Configuring services, load balancing strategies, health checks, sticky sessions.
+---
+
+## What is a Service?
+
+A **Service** is the backend destination that handles requests after routing and middleware processing. Services are pools of servers that Traefik load balances across.
+
+```yaml
+http:
+  services:
+    my-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.10:8080"
+          - url: "http://192.168.1.11:8080"
+          - url: "http://192.168.1.12:8080"
+        strategy: wrr
+        healthCheck:
+          path: /health
+          interval: 30s
+          timeout: 3s
+```
+
+## Service Types
+
+### HTTP Service (Load Balancer)
+
+The most common type — forwards HTTP requests to backend servers:
+
+```yaml
+http:
+  services:
+    web-app:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:3000"
+          - url: "http://10.0.0.2:3000"
+        strategy: p2c
+        sticky:
+          cookie:
+            name: _traefik_session
+            httpOnly: true
+            secure: true
+        healthCheck:
+          path: "/healthz"
+          interval: "15s"
+          timeout: "3s"
+```
+
+<Callout variant="tip" title="Docker Service Discovery">
+When using Docker provider, you don't need to specify servers manually. Traefik discovers them from container IPs. You only need:
+```yaml
+# Docker label
+traefik.http.services.my-service.loadbalancer.server.port=3000
+```
+</Callout>
+
+### Internal Services
+
+Traefik has two built-in internal services:
+
+```yaml
+# Route to the dashboard
+routers:
+  dashboard:
+    rule: "Host(`traefik.example.com`)"
+    service: api@internal
+
+# Route to the ping endpoint (health check)
+routers:
+  ping:
+    rule: "Host(`traefik.example.com`) && Path(`/ping`)"
+    service: ping@internal
+```
+
+### Weighted Services (Blue-Green / Canary)
+
+```yaml
+http:
+  services:
+    app-v1:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:3000"
+
+    app-v2:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.2:3000"
+
+    app-weighted:
+      weighted:
+        services:
+          - name: app-v1
+            weight: 9     # 90% traffic
+          - name: app-v2
+            weight: 1     # 10% traffic
+```
+
+### Mirroring Service (Shadow Traffic)
+
+```yaml
+http:
+  services:
+    main-api:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:8080"
+
+    mirrored:
+      mirroring:
+        service: main-api
+        mirrors:
+          - name: shadow-api
+            percent: 10  # Mirror 10% of requests
+```
+
+<Callout variant="warning" title="Mirroring Caveats">
+Mirrored requests are **fire-and-forget**. If the mirror target fails, the main request is unaffected. Use this for testing in production, not for critical traffic.
+</Callout>
+
+## Load Balancing Strategies
+
+| Strategy | Algorithm | Best For |
+|----------|-----------|----------|
+| `wrr` (default) | Weighted Round Robin | Simple, even distribution |
+| `p2c` | Power of Two Choices | Better distribution under load |
+| `hrw` | Highest Random Weight | Consistent hashing (cache-friendly) |
+| `leasttime` | Least response time | Latency-sensitive workloads |
+
+<Callout variant="info" title="Strategy Comparison">
+`wrr` is simplest and works well for most cases. `p2c` significantly improves distribution under high load and is recommended for production. `hrw` is ideal if you want the same client to hit the same server without sticky sessions.
+</Callout>
+
+### Power of Two Choices (p2c)
+
+The p2c algorithm:
+1. Picks two random servers from the pool
+2. Routes to the one with **fewer active connections**
+3. Provides much better load distribution than naive round-robin
+
+```yaml
+services:
+  api:
+    loadBalancer:
+      servers:
+        - url: "http://10.0.0.1:8080"
+        - url: "http://10.0.0.2:8080"
+        - url: "http://10.0.0.3:8080"
+      strategy: p2c
+```
+
+### Highest Random Weight (hrw)
+
+HRW provides **consistent hashing** — the same client is always routed to the same server (no sticky session needed):
+
+```yaml
+services:
+  cache-service:
+    loadBalancer:
+      servers:
+        - url: "http://10.0.0.1:6379"
+        - url: "http://10.0.0.2:6379"
+      strategy: hrw
+```
+
+## Health Checks
+
+Health checks automatically remove unhealthy servers from the load balancing pool:
+
+```yaml
+services:
+  api:
+    loadBalancer:
+      servers:
+        - url: "http://10.0.0.1:8080"
+        - url: "http://10.0.0.2:8080"
+      healthCheck:
+        path: /health
+        port: 8080
+        interval: 30s
+        timeout: 3s
+        healthyStatusCount: 2
+        unhealthyStatusCount: 3
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `path` | — | Health check URL path |
+| `port` | Server port | Override port for health checks |
+| `interval` | 30s | How often to check |
+| `timeout` | 5s | Request timeout |
+| `hostname` | — | Custom Host header |
+| `scheme` | http | http or https |
+| `headers` | — | Custom headers for health check |
+| `healthyStatusCount` | 1 | Consecutive successes to mark healthy |
+| `unhealthyStatusCount` | 2 | Consecutive failures to mark unhealthy |
+
+## Sticky Sessions
+
+Sticky sessions ensure a client always routes to the same backend server:
+
+```yaml
+services:
+  web-app:
+    loadBalancer:
+      servers:
+        - url: "http://10.0.0.1:3000"
+        - url: "http://10.0.0.2:3000"
+      sticky:
+        cookie:
+          name: _traefik_session
+          httpOnly: true
+          secure: true
+          sameSite: lax
+```
+
+<Callout variant="warning" title="Sticky Sessions and Failover">
+When a backend server goes down, sticky sessions are broken. The client will be routed to a different server. Design your application to handle this.
+</Callout>
+
+## Circuit Breaker
+
+Protect your backends from cascading failures:
+
+```yaml
+services:
+  fragile-api:
+    loadBalancer:
+      servers:
+        - url: "http://10.0.0.1:8080"
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.5 || LatencyAtQuantileMS(50.0) > 100"
+```
+
+<Callout variant="tip" title="Circuit Breaker Expressions">
+- `NetworkErrorRatio()` — ratio of network errors
+- `LatencyAtQuantileMS(p)` — latency at percentile p (e.g., 50.0, 95.0, 99.0)
+- `ResponseCodeRatio()` — ratio of specific HTTP status codes
+- Use `||` (OR) or `&&` (AND) to combine conditions
+</Callout>
+
+## Server Pass-Through (v3.0+)
+
+```yaml
+services:
+  my-service:
+    loadBalancer:
+      passHostHeader: false  # Don't forward the original Host header
+      serversTransport: my-transport  # Custom transport settings
+      responseForwarding:
+        flushInterval: 100ms
+```
+
+<Callout variant="success" title="Next Chapter">
+Now explore the [Middleware](/learn/middleware) catalog — the tools that transform requests and responses between routers and services.
+</Callout>

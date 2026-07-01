@@ -1,0 +1,413 @@
+---
+title: Middleware
+chapter: 6
+track: beginner
+difficulty: intermediate
+description: Complete middleware catalog — authentication, rate limiting, headers, compression, error handling, and more.
+---
+
+## What is Middleware?
+
+Middleware are **pluggable modules** that modify the request or response as it passes through Traefik. They sit between the Router and the Service in the request flow.
+
+<Callout variant="info" title="Middleware Execution Order">
+Middlewares execute in the order they appear in the router's `middlewares` list. Each middleware passes the modified request to the next in the chain.
+</Callout>
+
+## Middleware Chain
+
+```yaml
+http:
+  middlewares:
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+
+    security-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        customFrameOptionsValue: "SAMEORIGIN"
+
+  routers:
+    api:
+      rule: "Host(`api.example.com`)"
+      middlewares:
+        - rate-limit
+        - security-headers
+      service: api-service
+```
+
+## Authentication Middlewares
+
+### BasicAuth
+
+```yaml
+http:
+  middlewares:
+    auth:
+      basicAuth:
+        users:
+          - "admin:$2y$05$xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          - "user:$2y$05$yyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        realm: "Traefik Dashboard"
+        removeHeader: true
+```
+
+<Callout variant="warning" title="Password Hashes">
+Traefik uses bcrypt hashes. Generate them with:
+```bash
+htpasswd -nbB admin mypassword
+```
+</Callout>
+
+### DigestAuth
+
+```yaml
+http:
+  middlewares:
+    digest-auth:
+      digestAuth:
+        users:
+          - "admin:realm:hash"
+        removeHeader: false
+```
+
+### ForwardAuth
+
+Forward authentication to an external service:
+
+```yaml
+http:
+  middlewares:
+    oauth:
+      forwardAuth:
+        address: "http://auth-service:9000/verify"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-Auth-User
+          - X-Auth-Role
+        tls:
+          ca: /etc/traefik/certs/ca.pem
+```
+
+<Callout variant="tip" title="ForwardAuth Use Cases">
+ForwardAuth is ideal for integrating with OAuth2 proxies (oauth2-proxy, Pomerium), OpenID Connect providers, or custom auth services.
+</Callout>
+
+### IP Allow/Deny Lists
+
+```yaml
+http:
+  middlewares:
+    allow-internal:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+
+    block-bad-ips:
+      ipDenyList:
+        sourceRange:
+          - "203.0.113.0/24"
+```
+
+## Security Middlewares
+
+### Headers
+
+```yaml
+http:
+  middlewares:
+    security:
+      headers:
+        # Security Headers
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+
+        # Custom Headers
+        customRequestHeaders:
+          X-My-Header: my-value
+        customResponseHeaders:
+          X-Powered-By: "Traefik"
+
+        # CORS
+        accessControlAllowOriginList:
+          - "https://example.com"
+        accessControlAllowMethods:
+          - "GET"
+          - "POST"
+        accessControlAllowHeaders:
+          - "Content-Type"
+          - "Authorization"
+        accessControlMaxAge: 86400
+```
+
+### CORS
+
+```yaml
+http:
+  middlewares:
+    cors:
+      headers:
+        accessControlAllowOriginList:
+          - "https://app.example.com"
+          - "https://admin.example.com"
+        accessControlAllowMethods:
+          - "GET"
+          - "POST"
+          - "PUT"
+          - "DELETE"
+          - "OPTIONS"
+        accessControlAllowHeaders:
+          - "Content-Type"
+          - "Authorization"
+          - "X-Requested-With"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 86400
+```
+
+## Traffic Control Middlewares
+
+### Rate Limiting
+
+```yaml
+http:
+  middlewares:
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1m
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+          requestHost: true
+```
+
+<Callout variant="info">
+- `average`: Average requests per period
+- `burst`: Maximum burst before throttling
+- `period`: Time window (default: 1s)
+- `sourceCriterion`: How to identify clients (by IP, header, or request host)
+</Callout>
+
+### Circuit Breaker
+
+```yaml
+http:
+  middlewares:
+    circuit-breaker:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.5"
+        checkPeriod: 10s
+        fallbackDuration: 30s
+        recoveryDuration: 30s
+```
+
+### Max Connection
+
+```yaml
+http:
+  middlewares:
+    limit-connections:
+      maxConnections:
+        amount: 10
+        extractorFunc: "request.host('example.com')"
+```
+
+### Buffering
+
+```yaml
+http:
+  middlewares:
+    buffer:
+      buffering:
+        maxRequestBodyBytes: 10485760       # 10MB
+        memRequestBodyBytes: 2097152        # 2MB
+        maxResponseBodyBytes: 10485760      # 10MB
+        memResponseBodyBytes: 2097152       # 2MB
+        retryExpression: "IsNetworkError() && Attempts() <= 3"
+```
+
+## Request Transformation Middlewares
+
+### AddPrefix / StripPrefix / ReplacePath
+
+```yaml
+http:
+  middlewares:
+    add-api-prefix:
+      addPrefix:
+        prefix: "/api/v1"
+
+    strip-api-prefix:
+      stripPrefix:
+        prefixes:
+          - "/api"
+          - "/v2"
+        forceSlash: false
+
+    rewrite-path:
+      replacePath:
+        path: "/app"
+
+    # Regex path replacement (v3.0+)
+    rewrite-path-regex:
+      replacePathRegex:
+        regex: "^/api/v1/(.*)"
+        replacement: "/$1"
+```
+
+### Add / Remove Headers
+
+```yaml
+http:
+  middlewares:
+    custom-headers:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+          X-Custom: "value"
+        customResponseHeaders:
+          X-Powered-By: "Traefik Proxy"
+```
+
+### Redirect
+
+```yaml
+http:
+  middlewares:
+    redirect-https:
+      redirectScheme:
+        scheme: https
+        port: "443"
+        permanent: true
+
+    redirect-path:
+      redirectRegex:
+        regex: "^http://"
+        replacement: "https://"
+        permanent: true
+```
+
+### URL Rewriting (v3.0+)
+
+```yaml
+http:
+  middlewares:
+    url-rewrite:
+      urlRewrite:
+        # Server-side URL rewrite (not a redirect)
+        regex: "^/old-path/(.*)"
+        replacement: "/new-path/$1"
+```
+
+## Compression
+
+```yaml
+http:
+  middlewares:
+    compress:
+      compress:
+        excludedContentTypes:
+          - "text/event-stream"
+          - "image/png"
+```
+
+<Callout variant="note">
+Traefik's compression middleware uses gzip. It's enabled by default for most text-based content types. You can exclude specific types if needed.
+</Callout>
+
+## Error Handling (Custom Error Pages)
+
+```yaml
+http:
+  middlewares:
+    error-pages:
+      errors:
+        status:
+          - "404"
+          - "500-599"
+        service: error-service
+        query: "/{status}.html"
+```
+
+<Callout variant="tip">
+The error middleware allows you to serve custom error pages from a dedicated service. The `{status}` placeholder is replaced with the HTTP status code.
+</Callout>
+
+## Retry
+
+```yaml
+http:
+  middlewares:
+    retry:
+      retry:
+        attempts: 3
+        initialInterval: 100ms
+```
+
+## InFlightReq (Concurrent Request Limiting)
+
+```yaml
+http:
+  middlewares:
+    inflight-limit:
+      inFlightReq:
+        amount: 100
+        sourceCriterion:
+          requestHost: true
+          ipStrategy:
+            depth: 1
+```
+
+## Plugin Middlewares
+
+Custom middlewares via plugins:
+
+```yaml
+http:
+  middlewares:
+    my-plugin:
+      plugin:
+        my-custom-plugin:
+          headerName: X-Debug
+          headerValue: "true"
+```
+
+<Callout variant="info">
+Plugins extend Traefik's middleware capabilities. See the [Plugins chapter](/learn/plugins) for details on finding, installing, and developing plugins.
+</Callout>
+
+## Middleware Ordering Guidelines
+
+For a typical API gateway setup:
+
+```yaml
+routers:
+  api:
+    rule: "Host(`api.example.com`)"
+    middlewares:
+      - rate-limit       # 1. Throttle traffic first
+      - ip-allowlist     # 2. Filter by IP
+      - auth             # 3. Authenticate
+      - security-headers # 4. Add security headers
+      - compress         # 5. Compress response
+      - buffer           # 6. Buffer for sanity
+    service: api-service
+```
+
+<Callout variant="success" title="Next Chapter">
+Learn how [Providers](/learn/providers) connect Traefik to your infrastructure for automatic service discovery.
+</Callout>

@@ -1,0 +1,314 @@
+---
+title: TCP & UDP Routing
+chapter: 11
+track: beginner
+difficulty: intermediate
+description: Configuring TCP and UDP entrypoints, SNI routing, TLS passthrough, and UDP load balancing.
+---
+
+## TCP Routing
+
+Traefik can route **raw TCP traffic** in addition to HTTP. This is useful for databases, message queues, gRPC, and any non-HTTP protocol.
+
+<Callout variant="info">
+TCP routers use **HostSNI()** matching based on the TLS Server Name Indication. If the connection is not TLS, a dedicated TCP router per entrypoint is typically used.
+</Callout>
+
+## TCP vs HTTP
+
+| Feature | HTTP Routers | TCP Routers |
+|---------|-------------|-------------|
+| Protocol | HTTP/1.1, HTTP/2, HTTP/3 | Raw TCP |
+| Matching | Host, Path, Headers, etc. | HostSNI only |
+| Middleware | Full HTTP middleware | Limited (IP allow/deny) |
+| TLS Termination | Yes | Yes (or passthrough) |
+| Use Cases | Web apps, APIs | Databases, gRPC, custom protocols |
+
+## TCP Router Configuration
+
+```yaml
+tcp:
+  routers:
+    postgres:
+      rule: "HostSNI(`*`)"
+      entryPoints:
+        - postgres
+      service: postgres-service
+      tls:
+        passthrough: true
+
+  services:
+    postgres-service:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:5432"
+          - address: "10.0.0.2:5432"
+```
+
+### TCP EntryPoints
+
+```yaml
+entryPoints:
+  postgres:
+    address: ":5432"
+  mongodb:
+    address: ":27017"
+  mysql:
+    address: ":3306"
+  redis:
+    address: ":6379"
+```
+
+### TCP with TLS Termination
+
+```yaml
+tcp:
+  routers:
+    secure-postgres:
+      rule: "HostSNI(`db.example.com`)"
+      entryPoints:
+        - postgres
+      service: postgres-service
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    postgres-service:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:5432"
+```
+
+<Callout variant="tip">
+TLS termination at Traefik means the database sees plain TCP (no TLS). This lets Traefik inspect the SNI for routing but requires the Traefik-to-database network to be trusted.
+</Callout>
+
+### TCP with TLS Passthrough
+
+```yaml
+tcp:
+  routers:
+    passthrough-db:
+      rule: "HostSNI(`db.example.com`)"
+      entryPoints:
+        - postgres
+      service: postgres-service
+      tls:
+        passthrough: true
+```
+
+<Callout variant="warning">
+With TLS passthrough, Traefik only sees the SNI during the TLS handshake. It cannot inspect or modify the traffic. Use this when the backend must handle its own TLS.
+</Callout>
+
+## HostSNI Matching Rules
+
+```yaml
+# Match any SNI
+rule: "HostSNI(`*`)"
+
+# Match specific domain
+rule: "HostSNI(`db.example.com`)"
+
+# Match wildcard
+rule: "HostSNI(`*.example.com`)"
+
+# Match multiple
+rule: "HostSNI(`db1.example.com`) || HostSNI(`db2.example.com`)"
+```
+
+<Callout variant="note">
+For non-TLS TCP connections, HostSNI(`*`) is the only option since there's no SNI to match. Each non-TLS TCP entrypoint typically has a single catch-all router.
+</Callout>
+
+## TCP Services
+
+```yaml
+tcp:
+  services:
+    redis-cluster:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:6379"
+          - address: "10.0.0.2:6379"
+          - address: "10.0.0.3:6379"
+        strategy: wrr
+        terminationDelay: 5s
+        proxyProtocol:
+          version: 2
+```
+
+### Weighted TCP Services
+
+```yaml
+tcp:
+  services:
+    db-v1:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:5432"
+    db-v2:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.2:5432"
+    db-weighted:
+      weighted:
+        services:
+          - name: db-v1
+            weight: 9
+          - name: db-v2
+            weight: 1
+```
+
+## UDP Routing
+
+UDP routing supports connectionless protocols like DNS, syslog, and custom UDP services.
+
+```yaml
+udp:
+  routers:
+    dns-server:
+      entryPoints:
+        - dns
+      service: dns-service
+
+  services:
+    dns-service:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:53"
+          - address: "10.0.0.2:53"
+```
+
+### UDP EntryPoints
+
+```yaml
+entryPoints:
+  dns:
+    address: ":53/udp"
+  syslog:
+    address: ":514/udp"
+  custom-udp:
+    address: ":1234/udp"
+```
+
+<Callout variant="warning" title="UDP Limitations">
+- UDP is connectionless — there's no handshake or session
+- No TLS, no HostSNI matching
+- Load balancing is best-effort (round-robin)
+- No health checks for UDP services
+- No middleware support
+</Callout>
+
+## gRPC Routing
+
+gRPC uses HTTP/2 which Traefik handles natively:
+
+```yaml
+http:
+  routers:
+    grpc:
+      rule: "Host(`grpc.example.com`) && Headers(`Content-Type`, `application/grpc`)"
+      entryPoints:
+        - websecure
+      service: grpc-service
+      tls: {}
+
+  services:
+    grpc-service:
+      loadBalancer:
+        servers:
+          - url: "h2c://10.0.0.1:50051"   # h2c = HTTP/2 cleartext
+```
+
+<Callout variant="tip" title="gRPC Notes">
+- Use `h2c://` for gRPC backends without TLS (behind Traefik's TLS termination)
+- Use `https://` for gRPC backends with their own TLS
+- gRPC-Web is also supported without special configuration
+- Keepalive settings may need tuning for long-lived gRPC streams
+</Callout>
+
+## WebSocket Support
+
+WebSockets work automatically through HTTP routers:
+
+```yaml
+http:
+  routers:
+    ws:
+      rule: "Host(`ws.example.com`) && PathPrefix(`/ws`)"
+      service: ws-service
+
+  services:
+    ws-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:8080"
+```
+
+<Callout variant="info">
+WebSocket connections are upgraded automatically. No special configuration needed for the HTTP router. The connection upgrade is handled transparently.
+</Callout>
+
+## HTTP/2 Support
+
+Traefik supports HTTP/2 and HTTP/3:
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    http3: {}        # Enable HTTP/3 (QUIC)
+```
+
+- HTTP/2 is enabled by default on HTTPS entrypoints
+- HTTP/3 requires explicit `http3: {}` on the entrypoint
+- HTTP/2 cleartext (h2c) is supported for backend connections
+
+## Example: Complete TCP/UDP Setup
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+  postgres:
+    address: ":5432"
+  dns:
+    address: ":53/udp"
+
+tcp:
+  routers:
+    postgres:
+      rule: "HostSNI(`*`)"
+      entryPoints:
+        - postgres
+      service: postgres-cluster
+      tls:
+        passthrough: true
+
+  services:
+    postgres-cluster:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:5432"
+          - address: "10.0.0.2:5432"
+
+udp:
+  routers:
+    dns:
+      entryPoints:
+        - dns
+      service: dns-cluster
+
+  services:
+    dns-cluster:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:53"
+```
+
+<Callout variant="success" title="Next Chapter">
+Now dive deep into [Security](/learn/security) — hardening Traefik in production.
+</Callout>

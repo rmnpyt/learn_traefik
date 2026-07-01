@@ -1,0 +1,196 @@
+---
+title: The Traefik Ecosystem
+chapter: 14
+track: production
+difficulty: intermediate
+description: Comparing Traefik Proxy, Traefik Hub, Traefik Enterprise, Traefik AI Gateway, and MCP Gateway.
+---
+
+## The Traefik Product Family
+
+Traefik is more than just a proxy. Traefik Labs offers a suite of products built on top of the open-source Traefik Proxy.
+
+| Product | Type | License | Base |
+|---------|------|---------|------|
+| **Traefik Proxy** | Open-source reverse proxy | MIT | — |
+| **Traefik Hub** | API management & connectivity | Commercial | Traefik Proxy |
+| **Traefik Enterprise** | Enterprise-grade proxy | Commercial | Traefik Proxy |
+| **Traefik AI Gateway** | AI traffic management | Commercial | Traefik Proxy |
+| **Traefik MCP Gateway** | MCP protocol gateway | Commercial | Traefik Proxy |
+
+## Traefik Proxy (Open Source)
+
+The core open-source project — what this guide covers.
+
+**Key Features:**
+- Automatic service discovery (Docker, K8s, Consul, etc.)
+- Dynamic configuration without reloads
+- Built-in Let's Encrypt
+- 30+ middleware modules
+- TCP/UDP routing
+- Prometheus metrics
+- Web dashboard
+- Plugin system
+
+```yaml
+# Traefik Proxy is the foundation
+services:
+  traefik:
+    image: traefik:v3.3
+    command:
+      - "--providers.docker=true"
+      - "--entrypoints.websecure.address=:443"
+```
+
+## Traefik Hub
+
+A commercial API management and connectivity platform built on Traefik Proxy.
+
+**Additional Features:**
+- API management portal
+- Developer portal for API consumers
+- API key management and rate limiting
+- API catalog and discovery
+- API analytics and dashboards
+- Traffic policies (global API policies)
+- GitOps workflow
+
+**When to use:** You need to expose APIs to external developers with API key management, rate limiting, and a developer portal.
+
+<Callout variant="info">
+Traefik Hub runs as a sidecar to Traefik Proxy and extends it with API management capabilities. It does NOT replace Traefik Proxy.
+</Callout>
+
+## Traefik Enterprise
+
+The enterprise-grade version of Traefik Proxy with additional security and compliance features.
+
+**Additional Features:**
+- Custom plugins (proprietary, not shared)
+- Advanced access logs
+- FIPS-compliant cryptography
+- Enhanced audit logging
+- SLA support
+- SSO/SAML integration
+- Web application firewall (WAF) integration
+- Advanced rate limiting
+
+**When to use:** Your organization has compliance requirements (PCI-DSS, HIPAA, FedRAMP) or needs enterprise support.
+
+```yaml
+# Traefik Enterprise builds on Traefik Proxy
+services:
+  traefik:
+    image: traefik:enterprise-v3.3
+    command:
+      - "--enterprise.license=your-license-key"
+      - "--providers.docker=true"
+```
+
+## Traefik AI Gateway
+
+A specialized gateway for managing AI and LLM traffic.
+
+**Key Features:**
+- **Provider abstraction** — Single endpoint for OpenAI, Anthropic, Cohere, local LLMs
+- **Cost management** — Budget controls, cost tracking per model/provider
+- **Rate limiting** — Per API key, per model, per user
+- **Prompt inspection** — Monitor prompts and responses
+- **Model fallback** — Automatic failover between providers
+- **Caching** — Cache similar responses to reduce API costs
+
+```yaml
+# Traefik AI Gateway
+http:
+  routers:
+    llm:
+      rule: "Host(`ai.example.com`) && PathPrefix(`/v1`)"
+      service: llm-gateway
+      middlewares:
+        - ai-rate-limit
+
+  services:
+    llm-gateway:
+      loadBalancer:
+        servers:
+          - url: "http://ai-gateway:8080"
+
+  middlewares:
+    ai-rate-limit:
+      rateLimit:
+        average: 100
+        burst: 20
+        period: 1m
+        sourceCriterion:
+          requestHeader:
+            name: X-API-Key
+```
+
+**When to use:** You're building AI applications that need cost control, provider abstraction, and observability for LLM calls.
+
+## Traefik MCP Gateway
+
+A gateway for the Model Context Protocol (MCP) — enabling AI agents to securely access tools and data sources.
+
+**Key Features:**
+- MCP protocol translation
+- Tool discovery and routing
+- Secure authentication for agent access
+- Rate limiting per agent/per user
+- Audit logging of all tool calls
+- Tool registry and version management
+
+<Callout variant="info" title="What is MCP?">
+Model Context Protocol (MCP) is an open protocol developed by Anthropic that standardizes how AI applications connect to external tools and data sources. Traefik MCP Gateway routes and manages these connections securely.
+</Callout>
+
+## Product Comparison Matrix
+
+| Feature | Proxy | Hub | Enterprise | AI Gateway | MCP Gateway |
+|---------|-------|-----|------------|------------|-------------|
+| Reverse Proxy | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Service Discovery | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Let's Encrypt | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Middleware Pipeline | ✓ | ✓ | ✓ | ✓ | ✓ |
+| TCP/UDP | ✓ | ✓ | ✓ | ✓ | ✓ |
+| API Management | — | ✓ | — | — | — |
+| Developer Portal | — | ✓ | — | — | — |
+| Custom Plugins | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FIPS Compliance | — | — | ✓ | — | — |
+| SLA Support | — | — | ✓ | ✓ | ✓ |
+| LLM Routing | — | — | — | ✓ | — |
+| MCP Protocol | — | — | — | — | ✓ |
+| Cost Management | — | — | — | ✓ | — |
+| SSO/SAML | — | — | ✓ | ✓ | ✓ |
+
+## Choosing the Right Product
+
+**Start with Traefik Proxy** if:
+- You need a reverse proxy with auto-discovery
+- You want automatic TLS
+- You're running containers or Kubernetes
+- Open source is preferred
+
+**Add Traefik Hub** if:
+- You expose APIs to external developers
+- You need API key management and a developer portal
+- You want API analytics
+
+**Upgrade to Traefik Enterprise** if:
+- You have compliance requirements
+- You need FIPS or audit features
+- You require vendor support and SLA
+
+**Add AI Gateway** if:
+- You route traffic to LLM providers
+- You need cost control for AI APIs
+- You want provider abstraction
+
+**Add MCP Gateway** if:
+- You're building AI agent systems
+- Your agents need secure access to tools
+- You need audit trails for agent actions
+
+<Callout variant="success" title="Next Chapter">
+Ready for production? Learn how to [deploy Traefik](/learn/production) with high availability, monitoring, and CI/CD.
+</Callout>

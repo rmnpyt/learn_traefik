@@ -1,0 +1,321 @@
+---
+title: Security
+chapter: 12
+track: security
+difficulty: advanced
+description: Hardening Traefik — security headers, mTLS, IP allowlisting, OAuth, security middleware patterns.
+---
+
+## Security Overview
+
+Traefik provides multiple layers of security built-in. This chapter covers hardening your Traefik deployment from the network edge to the backend services.
+
+## Defense in Depth
+
+A layered security approach:
+
+```
+Internet → Firewall → Load Balancer → Traefik → Middleware → Service
+                                          ↓
+                                     IP Allowlist
+                                          ↓
+                                     Rate Limiting
+                                          ↓
+                                     Authentication
+                                          ↓
+                                     Security Headers
+                                          ↓
+                                     Backend Service
+```
+
+## Middleware Security Patterns
+
+### 1. IP Allowlisting
+
+```yaml
+http:
+  middlewares:
+    internal-only:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+
+    vpn-only:
+      ipAllowList:
+        sourceRange:
+          - "10.8.0.0/16"   # OpenVPN subnet
+```
+
+### 2. Security Headers (OWASP Recommended)
+
+```yaml
+http:
+  middlewares:
+    owasp-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customResponseHeaders:
+          X-Content-Type-Options: "nosniff"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+          Permissions-Policy: "camera=(), microphone=(), geolocation=()"
+```
+
+### 3. Rate Limiting
+
+```yaml
+http:
+  middlewares:
+    strict-rate-limit:
+      rateLimit:
+        average: 10
+        burst: 5
+        period: 1m
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+
+    api-rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1m
+```
+
+### 4. Authentication
+
+```yaml
+http:
+  middlewares:
+    basic-auth:
+      basicAuth:
+        users:
+          - "admin:$2y$05$xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        realm: "Restricted Area"
+        removeHeader: true
+
+    oauth-proxy:
+      forwardAuth:
+        address: "http://oauth2-proxy:4180/oauth2/auth"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-Forwarded-User
+          - X-Forwarded-Email
+```
+
+## Mutual TLS (mTLS)
+
+### Certificate Authority
+
+```yaml
+tls:
+  options:
+    mtls-strict:
+      minVersion: VersionTLS12
+      clientAuth:
+        caFiles:
+          - /etc/traefik/certs/internal-ca.pem
+        clientAuthType: RequireAndVerifyClientCert
+
+    mtls-optional:
+      clientAuth:
+        caFiles:
+          - /etc/traefik/certs/ca.pem
+        clientAuthType: VerifyClientCertIfGiven
+```
+
+### Apply to Router
+
+```yaml
+http:
+  routers:
+    internal-api:
+      rule: "Host(`api.internal.example.com`)"
+      service: api-service
+      tls:
+        options: mtls-strict
+```
+
+## Docker Socket Security
+
+### Read-Only Mount
+
+```yaml
+services:
+  traefik:
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+```
+
+### Docker Socket Proxy
+
+Better security: use a socket proxy (like `technorama/docker-socket-proxy`):
+
+```yaml
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+      SERVICES: 1
+      TASKS: 1
+
+  traefik:
+    image: traefik:v3.3
+    command:
+      - "--providers.docker.endpoint=tcp://docker-proxy:2375"
+```
+
+<Callout variant="warning" title="Docker Socket Security">
+The Docker socket grants root-level access. Always use read-only mode. For production, use a socket proxy that restricts API access to only what Traefik needs (containers, networks, services).
+</Callout>
+
+## Secrets Management
+
+### File-Based Secrets
+
+```yaml
+# traefik.yml
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@example.com
+      storage: /run/secrets/acme.json
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+
+# Docker secrets
+secrets:
+  admin-password:
+    file: ./secrets/admin_password.txt
+```
+
+### Environment Variable Secrets
+
+```bash
+export TRAEFIK_API_DASHBOARD=true
+export TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=unix:///var/run/docker.sock
+```
+
+## CORS Configuration
+
+For API gateways:
+
+```yaml
+http:
+  middlewares:
+    cors:
+      headers:
+        accessControlAllowOriginList:
+          - "https://app.example.com"
+          - "https://admin.example.com"
+        accessControlAllowMethods:
+          - "GET"
+          - "POST"
+          - "PUT"
+          - "DELETE"
+          - "OPTIONS"
+        accessControlAllowHeaders:
+          - "Authorization"
+          - "Content-Type"
+          - "X-Requested-With"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 86400
+```
+
+<Callout variant="info" title="CORS Tips">
+- Be as restrictive as possible with allowed origins
+- Never use `Access-Control-Allow-Origin: *` with credentials
+- `OPTIONS` preflight requests should not require authentication
+- Cache preflight responses with `accessControlMaxAge`
+</Callout>
+
+## TLS Hardening
+
+```yaml
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+      sniStrict: true
+      preferServerCipherSuites: true
+
+    modern:
+      minVersion: VersionTLS13
+```
+
+### HTTP to HTTPS Redirect
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+```
+
+## IP Blocking
+
+```yaml
+http:
+  middlewares:
+    block-bad-actors:
+      ipDenyList:
+        sourceRange:
+          - "203.0.113.0/24"
+          - "198.51.100.0/24"
+```
+
+## Secure Defaults Checklist
+
+| Setting | Recommended | Why |
+|---------|-------------|-----|
+| `api.dashboard` | Protected with auth | Prevents exposure of routing config |
+| `providers.docker.exposedByDefault` | `false` | Only expose containers you intend to |
+| `entryPoints.web.http.redirections` | Redirect to HTTPS | Enforce TLS |
+| `tls.options.default.minVersion` | `VersionTLS12` | Block older, insecure TLS versions |
+| Access logs | Enabled in production | Audit trail |
+| `forwardedHeaders.insecure` | `false` | Prevent IP spoofing |
+| `ping.entryPoint` | Dedicated internal port | Health check isolation |
+
+## Security Audit Commands
+
+```bash
+# Check TLS configuration
+curl -sI https://traefik.example.com | grep -i "strict-transport-security"
+
+# Test for insecure headers
+curl -s -D - https://traefik.example.com -o /dev/null
+
+# Check for open entrypoints
+nmap -p 80,443,8080 example.com
+
+# Verify certificate
+echo | openssl s_client -connect traefik.example.com:443 -servername traefik.example.com 2>/dev/null | openssl x509 -text
+```
+
+<Callout variant="success" title="Next Chapter">
+Learn about [Plugins](/learn/plugins) — extending Traefik with custom middleware.
+</Callout>

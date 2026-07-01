@@ -1,0 +1,245 @@
+---
+title: Routers & Rules
+chapter: 4
+track: beginner
+difficulty: beginner
+description: Router configuration, rule matchers, TLS settings, priorities, and middlewares.
+---
+
+## What is a Router?
+
+A **Router** is responsible for connecting incoming requests (from EntryPoints) to the Services that handle them. It evaluates **rules** to match requests and can apply **middlewares** before forwarding.
+
+```yaml
+http:
+  routers:
+    my-router:
+      rule: "Host(`example.com`) && PathPrefix(`/api`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - auth
+        - rate-limit
+      service: api-service
+      priority: 0
+      tls: {}
+```
+
+## Router Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `rule` | ✓ | Matching rule (Host, Path, Headers, etc.) |
+| `service` | ✓ | Target service name |
+| `entryPoints` | — | Restrict to specific entrypoints (all if omitted) |
+| `middlewares` | — | Array of middleware names to apply |
+| `priority` | — | Explicit priority (higher = first) |
+| `tls` | — | TLS settings (certResolver, options) |
+| `ruleSyntax` | — | v3.0: specify Matcher or Path syntax |
+
+## Rule Matchers in Detail
+
+<Callout variant="info" title="v3.x Note">
+Traefik v3.0+ supports both the original "Matcher" syntax and a new "Path" syntax. The Matcher syntax is the default and most common.
+</Callout>
+
+### Host Matchers
+
+```yaml
+# Exact host
+rule: "Host(`example.com`)"
+
+# Multiple hosts (OR)
+rule: "Host(`example.com`) || Host(`www.example.com`) || Host(`api.example.com`)"
+
+# Wildcard (subdomain match)
+rule: "Host(`*.example.com`)"
+
+# Regex host (requires v3, use HostRegexp)
+rule: "HostRegexp(`{sub:[a-z]+}.example.com`)"
+```
+
+### Path Matchers
+
+```yaml
+# Exact path
+rule: "Path(`/api/v1/users`)"
+
+# Path prefix
+rule: "PathPrefix(`/api`)"
+
+# Path separator (v3.0+)
+rule: "Path(`/api/v1/users/`)"
+
+# Multiple paths
+rule: "PathPrefix(`/api`) || PathPrefix(`/docs`)"
+```
+
+<Callout variant="warning" title="Path vs PathPrefix">
+`Path()` matches the exact path. `PathPrefix()` matches any request whose path starts with the given prefix. Most API routes should use `PathPrefix()`.
+</Callout>
+
+### Header Matchers
+
+```yaml
+# Exact header match
+rule: "Header(`X-Api-Key`, `my-secret-key`)"
+
+# Regex header match
+rule: "HeaderRegexp(`X-Version`, `v\\d+`)"
+
+# Multiple headers (AND)
+rule: "Headers(`Content-Type`, `application/json`, `X-Requested-With`, `XMLHttpRequest`)"
+```
+
+### Method Matchers
+
+```yaml
+rule: "Method(`GET`)"
+rule: "Method(`GET`, `POST`, `PUT`)"
+rule: "Method(`GET`) || Method(`POST`)"
+```
+
+### Query Parameter Matchers
+
+```yaml
+rule: "Query(`page`, `1`)"
+rule: "Query(`format`, `json`)"
+```
+
+### Source IP Matchers (v3.0+)
+
+```yaml
+rule: "ClientIP(`10.0.0.0/8`)"
+rule: "ClientIP(`10.0.0.0/8`, `192.168.0.0/16`)"
+```
+
+## Complex Rule Examples
+
+```yaml
+# API gateway routing
+routers:
+  api-gateway:
+    rule: "(Host(`api.example.com`) || Host(`api.internal`)) && PathPrefix(`/v2`) && Header(`X-Api-Version`, `2`)"
+    priority: 100
+    service: api-v2
+
+  # Web app with multiple conditions
+  web-app:
+    rule: "Host(`example.com`) && !PathPrefix(`/api`) && !PathPrefix(`/health`)"
+    service: web-app
+
+  # gRPC routing
+  grpc:
+    rule: "Host(`grpc.example.com`) && Method(`POST`) && Headers(`Content-Type`, `application/grpc`)"
+    service: grpc-service
+```
+
+## TLS on Routers
+
+Enable TLS for a router:
+
+```yaml
+routers:
+  secure-app:
+    rule: "Host(`example.com`)"
+    service: app
+    tls:
+      certResolver: letsencrypt   # Which ACME resolver to use
+      options: my-tls-options     # TLS options (min version, cipher suites)
+      domains:
+        - main: example.com
+          sans:
+            - www.example.com
+            - api.example.com
+```
+
+### TLS Passthrough (TCP)
+
+For TCP routers, you can pass TLS through without termination:
+
+```yaml
+tcp:
+  routers:
+    secure-tcp:
+      rule: "HostSNI(`*.example.com`)"
+      service: my-tcp-service
+      tls:
+        passthrough: true
+```
+
+<Callout variant="note">
+TLS passthrough sends the encrypted connection directly to the backend. Traefik does NOT decrypt it. Use this for services that handle their own TLS termination.
+</Callout>
+
+## Router Priority Pitfalls
+
+```yaml
+# BAD: No priority set, rule-length comparison may give unexpected results
+routers:
+  api-v2:
+    rule: "Host(`api.example.com`) && PathPrefix(`/v2`)"
+    service: api-v2
+  api:
+    rule: "Host(`api.example.com`)"
+    service: api
+
+# GOOD: Explicit priority
+routers:
+  api-v2:
+    rule: "Host(`api.example.com`) && PathPrefix(`/v2`)"
+    priority: 10
+    service: api-v2
+  api:
+    rule: "Host(`api.example.com`)"
+    priority: 5
+    service: api
+```
+
+<Callout variant="warning" title="Always Set Priority">
+When you have overlapping rules (e.g., a specific route and a catch-all), always set explicit priorities. Rule-length comparison is fragile and changes with every config update.
+</Callout>
+
+## Grouping Routers
+
+You can group routers internally without sticky sessions by using multiple routers pointing to the same service. For internal service grouping with sticky sessions, use a service-level sticky configuration instead.
+
+```yaml
+http:
+  routers:
+    blog-english:
+      rule: "Host(`blog.example.com`) && PathPrefix(`/en`)"
+      service: blog-service
+    blog-french:
+      rule: "Host(`blog.example.com`) && PathPrefix(`/fr`)"
+      service: blog-service
+
+  services:
+    blog-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:3000"
+```
+
+## Middleware Chaining on Routers
+
+```yaml
+routers:
+  rate-limited-app:
+    rule: "Host(`api.example.com`)"
+    middlewares:
+      - rate-limit@file
+      - ip-allowlist
+      - auth
+    service: api-service
+```
+
+Middlewares execute **in order** from top to bottom. The request flows through:
+1. `rate-limit@file` — checks rate limits
+2. `ip-allowlist` — checks source IP
+3. `auth` — checks authentication
+4. → reaches the service
+
+<Callout variant="success" title="Next Chapter">
+Learn about [Services & Load Balancing](/learn/services) — the backend destinations for your routers.
+</Callout>

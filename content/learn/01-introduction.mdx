@@ -1,0 +1,127 @@
+---
+title: Introduction to Traefik
+chapter: 1
+track: beginner
+difficulty: beginner
+description: What is Traefik and why use it? Core concepts, features comparison with other reverse proxies.
+---
+
+## What is Traefik?
+
+Traefik (pronounced "traffic") is an **open-source Application Proxy** that handles routing, load balancing, and service discovery for your microservices and containers. It was created by Emile Vauge in 2015 and is written in Go.
+
+Unlike traditional reverse proxies (nginx, HAProxy, Apache) that require manual configuration files and reloads, Traefik **automatically discovers services** by watching your infrastructure—Docker containers, Kubernetes pods, Consul services, and more.
+
+<Callout variant="info" title="Key Insight">
+Traefik's automatic service discovery is its killer feature. When a new container starts, Traefik detects it and updates routing rules without any manual intervention or reload.
+</Callout>
+
+## Why Traefik?
+
+### Automatic Service Discovery
+Traefik integrates directly with your infrastructure providers. When you deploy a new container with the right labels, Traefik immediately knows how to route traffic to it.
+
+### Dynamic Configuration
+Routes, middlewares, and certificates update in real-time—no reloads, no downtime.
+
+### Built-in Let's Encrypt
+TLS certificates are automatically obtained and renewed via ACME. No more manual certbot commands.
+
+### Cloud-Native by Design
+Designed for containers and orchestration: Docker, Kubernetes, Nomad, and major cloud providers.
+
+### Observability Built-In
+Metrics (Prometheus, OpenTelemetry), access logs, and a web dashboard come out of the box.
+
+### Middleware Pipeline
+Chain 30+ built-in middleware modules (rate limiting, authentication, headers, retries, circuit breakers) without writing any code.
+
+## Core Concepts
+
+Traefik's configuration model revolves around four core components:
+
+![Architecture Diagram - Notion of Four Core Concepts](/images/traefik-architecture.png)
+
+1. **EntryPoints** — The network ports Traefik listens on (e.g. `:80` for HTTP, `:443` for HTTPS)
+2. **Routers** — Rules that match incoming requests and route them to the right service
+3. **Services** — The backend destinations (load balanced pools of servers)
+4. **Middlewares** — Request/response transformations chained between routers and services
+
+<Callout variant="tip" title="Mental Model">
+Think of EntryPoints as doors, Routers as signposts, Middleware as security checkpoints, and Services as the rooms behind them.
+</Callout>
+
+## Traefik vs Alternatives
+
+| Feature | Traefik | nginx | HAProxy | Caddy |
+|---------|---------|-------|---------|-------|
+| Auto service discovery | ✓ | Manual | Manual | Limited |
+| Dynamic config without reload | ✓ | Requires reload | Reload | ✓ |
+| Built-in Let's Encrypt | ✓ | Plugin | No | ✓ |
+| Middleware pipeline | ✓ | Limited | Limited | Limited |
+| Kubernetes CRD support | ✓ | Manual | Manual | Manual |
+| Dashboard UI | ✓ | Paid | No | No |
+| Prometheus metrics | ✓ | Plugin | Plugin | Plugin |
+| TCP/UDP routing | ✓ | ✓ | ✓ | Limited |
+
+## When to Use Traefik
+
+**Traefik excels when:**
+- You run containers (Docker, Kubernetes, Nomad)
+- You want automatic TLS with Let's Encrypt
+- You need dynamic reconfiguration without downtime
+- You want built-in observability
+- Your architecture uses microservices or APIs
+
+**Traefik may not be ideal when:**
+- You need a pure static file server (nginx is simpler)
+- You have extremely simple routing needs
+- You require advanced nginx-specific features (like njs scripting)
+
+## The Traefik Ecosystem
+
+Traefik is part of a broader ecosystem under Traefik Labs:
+
+- **Traefik Proxy** — The open-source reverse proxy (v3.x is current)
+- **Traefik Hub** — Commercial API management and connectivity platform built on Traefik Proxy
+- **Traefik Enterprise** — Commercial version with additional security and compliance features
+- **Traefik AI Gateway** — AI-specific gateway for managing LLM API traffic
+- **Traefik MCP Gateway** — Model Context Protocol gateway for AI agent communication
+
+<Callout variant="note">
+We cover these ecosystem components in detail in the [Ecosystem chapter](/learn/ecosystem) and [Production chapter](/learn/production).
+</Callout>
+
+## Getting Started
+
+To install Traefik:
+
+**Using Docker (recommended for beginners):**
+
+```yaml
+# docker-compose.yml
+services:
+  traefik:
+    image: traefik:v3.3
+    command:
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+**Using static binary:**
+
+```bash
+# Linux
+curl -L https://github.com/traefik/traefik/releases/download/v3.3.0/traefik_v3.3.0_linux_amd64.tar.gz | tar xz
+sudo mv traefik /usr/local/bin/
+traefik --configFile=traefik.yml
+```
+
+<Callout variant="success" title="Next Step">
+Ready to understand how Traefik works under the hood? Continue to the [Architecture chapter](/learn/architecture).
+</Callout>

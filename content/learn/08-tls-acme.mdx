@@ -1,0 +1,257 @@
+---
+title: TLS & ACME
+chapter: 8
+track: beginner
+difficulty: intermediate
+description: Automatic TLS certificates with Let's Encrypt, ACME challenges, custom certificates, TLS options.
+---
+
+## Automatic TLS with ACME
+
+Traefik has **built-in ACME support** for automatic TLS certificate management. It can automatically obtain and renew certificates from Let's Encrypt or any ACME-compatible CA.
+
+<Callout variant="info" title="What is ACME?">
+ACME (Automatic Certificate Management Environment) is a protocol for automating certificate issuance and renewal. Let's Encrypt is the most popular ACME CA, and it's free.
+</Callout>
+
+## ACME Configuration
+
+```yaml
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@example.com
+      storage: /letsencrypt/acme.json
+      caServer: "https://acme-v02.api.letsencrypt.org/directory"  # Production
+      # caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"  # Staging
+
+      # Choose one challenge type:
+      httpChallenge:
+        entryPoint: web
+
+      # OR
+      # tlsChallenge: {}
+
+      # OR
+      # dnsChallenge:
+      #   provider: route53
+```
+
+## ACME Challenge Types
+
+### HTTP-01 Challenge
+
+The most common and simplest. Let's Encrypt validates by sending an HTTP request to `http://<domain>/.well-known/acme-challenge/`.
+
+```yaml
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      httpChallenge:
+        entryPoint: web     # Port 80 entrypoint MUST be open
+```
+
+<Callout variant="warning" title="HTTP-01 Requirements">
+- Port 80 must be publicly accessible
+- The `web` entrypoint (port 80) must exist — even with `http.redirections.entryPoint.to: websecure`
+- Does NOT support wildcard certificates
+</Callout>
+
+### TLS-ALPN-01 Challenge
+
+Validates via TLS handshake on port 443. No separate port needed.
+
+```yaml
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      tlsChallenge: {}
+```
+
+<Callout variant="tip" title="TLS-ALPN-01 Benefits">
+- Only needs port 443 (no port 80 required)
+- Works behind TCP load balancers that forward TLS
+- More stealthy — no .well-known endpoint exposed
+- Still doesn't support wildcards
+</Callout>
+
+### DNS-01 Challenge
+
+Validates via DNS TXT records. **Required for wildcard certificates.**
+
+```yaml
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      dnsChallenge:
+        provider: route53           # AWS Route53
+        delayBeforeCheck: 0
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+```
+
+<Callout variant="info" title="DNS-01 Providers">
+Traefik supports 30+ DNS providers: route53, cloudflare, gcloud, digitalocean, azure, ovh, hetzner, linode, duckdns, acme-dns, and many more. Each requires environment variables with API credentials.
+</Callout>
+
+### Wildcard Certificates
+
+```yaml
+routers:
+  app:
+    rule: "Host(`*.example.com`)"
+    tls:
+      certResolver: letsencrypt     # Must use DNS-01 challenge
+```
+
+## Router TLS Configuration
+
+```yaml
+http:
+  routers:
+    secure-app:
+      rule: "Host(`example.com`)"
+      service: app
+      tls:
+        certResolver: letsencrypt    # Which ACME resolver
+        options: my-tls-options@file # TLS options
+        domains:
+          - main: example.com
+            sans:
+              - www.example.com
+              - api.example.com
+```
+
+<Callout variant="note">
+The `tls` field on a router enables TLS termination for that router. Without it, the router serves plain HTTP. Routers on an HTTPS entrypoint MUST have `tls: {}` at minimum.
+</Callout>
+
+## Custom Certificates (Non-ACME)
+
+You can also provide certificates manually:
+
+```yaml
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/example.pem
+      keyFile: /etc/traefik/certs/example-key.pem
+      stores:
+        - default
+
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/certs/default.pem
+        keyFile: /etc/traefik/certs/default-key.pem
+```
+
+## TLS Options
+
+Fine-tune TLS security:
+
+```yaml
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      maxVersion: VersionTLS13
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+      sniStrict: false
+      preferServerCipherSuites: true
+
+    modern:
+      minVersion: VersionTLS13
+      sniStrict: true
+
+    mtls-only:
+      clientAuth:
+        caFiles:
+          - /etc/traefik/certs/ca.pem
+        clientAuthType: RequireAndVerifyClientCert
+```
+
+<Callout variant="warning" title="Default TLS Options">
+Traefik uses a safe default TLS configuration. Only override if you have specific compliance requirements (PCI-DSS, HIPAA, etc.) or need mTLS.
+</Callout>
+
+## Mutual TLS (mTLS)
+
+```yaml
+tls:
+  options:
+    mtls:
+      clientAuth:
+        caFiles:
+          - /etc/traefik/certs/ca.pem
+        clientAuthType: RequireAndVerifyClientCert
+      minVersion: VersionTLS12
+
+http:
+  routers:
+    internal-api:
+      rule: "Host(`api.internal.example.com`)"
+      service: api-service
+      tls:
+        options: mtls
+```
+
+## Certificate Storage
+
+ACME certificates are stored in a JSON file:
+
+```json
+{
+  "letsencrypt": {
+    "Account": { ... },
+    "Certificates": [
+      {
+        "Domain": { "Main": "example.com", "SANs": ["www.example.com"] },
+        "Certificate": "...base64...",
+        "Key": "...base64..."
+      }
+    ]
+  }
+}
+```
+
+<Callout variant="tip" title="Certificate Backup">
+Always back up your `acme.json` file. If lost, you'll be rate-limited by Let's Encrypt when requesting replacement certificates. Store it in a secure, backed-up location.
+</Callout>
+
+## Staging vs Production
+
+Always test with Let's Encrypt staging first:
+
+```yaml
+certificatesResolvers:
+  letsencrypt-staging:
+    acme:
+      caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+      email: admin@example.com
+      storage: /letsencrypt/acme-staging.json
+      httpChallenge:
+        entryPoint: web
+```
+
+<Callout variant="warning">
+Let's Encrypt has rate limits: 50 certificates per domain per week. Staging has much higher limits. Always test with staging first, then switch to production.
+</Callout>
+
+## Troubleshooting ACME
+
+Common issues:
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `acme: error: 403` | HTTP-01: domain unreachable | Check port 80 is open and no redirect interferes |
+| `acme: error: 429` | Rate limited | Wait a week or use staging |
+| Certificate not renewing | ACME storage path wrong | Check `storage` path is writable |
+| DNS challenge timeout | DNS propagation delay | Increase `delayBeforeCheck` |
+| Wrong certificate served | SNI mismatch | Check Host rule matches certificate domain |
+
+<Callout variant="success" title="Next Chapter">
+Learn about [Observability](/learn/observability) — metrics, logging, and tracing with Traefik.
+</Callout>

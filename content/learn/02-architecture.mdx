@@ -1,0 +1,179 @@
+---
+title: Architecture & Request Flow
+chapter: 2
+track: beginner
+difficulty: beginner
+description: How Traefik processes requests — entrypoints, routers, middleware chain, services.
+---
+
+## The Request Lifecycle
+
+Understanding how Traefik processes a request is fundamental to configuring it correctly. The flow is:
+
+1. **Client** sends request to Traefik's EntryPoint (e.g. `:443`)
+2. **EntryPoint** receives the connection and forwards it to matching Routers
+3. **Router** evaluates rules (Host, Path, Headers, etc.) to find a match
+4. **Router** passes the request through a **Middleware chain** (if configured)
+5. **Service** receives the modified request and forwards it to a backend server
+6. **Response** flows back through the same path
+
+<Callout variant="tip" title="Remember">
+Routers do NOT forward requests directly to services. The request passes through the middleware chain first, and only then reaches the service.
+</Callout>
+
+## Configuration Model
+
+Traefik has two layers of configuration:
+
+### Static Configuration
+
+Set at startup via:
+- **CLI flags** (`--entrypoints.web.address=:80`)
+- **Config file** (`traefik.yml` or `traefik.toml`)
+
+Static config defines:
+- EntryPoints
+- Providers
+- TLS certificates resolvers (ACME)
+- Observability settings (metrics, logs, tracing)
+- API/dashboard settings
+
+```yaml
+# traefik.yml — Static Configuration
+api:
+  dashboard: true
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@example.com
+      storage: /letsencrypt/acme.json
+      httpChallenge:
+        entryPoint: web
+```
+
+### Dynamic Configuration
+
+Updated at runtime via **Providers** (Docker labels, Kubernetes CRDs, Consul KV, file, etc.).
+
+Dynamic config defines:
+- Routers and their rules
+- Services and load balancer settings
+- Middleware chains
+- TLS options
+
+```yaml
+# Dynamic configuration via Docker labels
+services:
+  web:
+    image: nginx
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.rule=Host(`example.com`)"
+      - "traefik.http.services.web.loadbalancer.server.port=80"
+```
+
+<Callout variant="info">
+The separation between static and dynamic config is one of Traefik's most important design decisions. Static config rarely changes; dynamic config can change as often as containers start and stop.
+</Callout>
+
+## Providers
+
+Providers are Traefik's bridge to your infrastructure. They watch for changes and dynamically update the routing configuration.
+
+| Provider | Type | Best For |
+|----------|------|----------|
+| Docker | Orchestrator | Single-server Docker deployments |
+| Kubernetes | Orchestrator | K8s-native routing with CRDs or Ingress |
+| Consul | KV Store | Service mesh / Consul-based infra |
+| etcd | KV Store | etcd-based environments |
+| ZooKeeper | KV Store | ZooKeeper-based environments |
+| File | File | General purpose / testing |
+| Marathon | Orchestrator | Marathon/Mesos deployments |
+| Rancher | Orchestrator | Rancher-based environments |
+| Redis | KV Store | Redis-based dynamic config |
+| HTTP | External | Custom / dynamic API-based config |
+| Nomad | Orchestrator | HashiCorp Nomad environments |
+
+<Callout variant="warning" title="Provider Uniqueness">
+Each router, service, and middleware name must be **unique across all providers**. If both Docker and File providers define a router named "api", Traefik will error.
+</Callout>
+
+## Router Rule Matching
+
+Routers use **matchers** to decide which requests they handle:
+
+```yaml
+http:
+  routers:
+    blog:
+      rule: "Host(`blog.example.com`) && PathPrefix(`/posts`)"
+      service: blog-service
+```
+
+### Available Matchers
+
+| Matcher | Example | Description |
+|---------|---------|-------------|
+| `Host()` | `Host(\`example.com\`)` | Match request host |
+| `HostRegexp()` | `HostRegexp(` + regex pattern | Regex host matching |
+| `Path()` | `Path(\`/api\`)` | Exact path match |
+| `PathPrefix()` | `PathPrefix(\`/api\`)` | Path prefix match |
+| `Method()` | `Method(\`GET\`, \`POST\`)` | HTTP method |
+| `Header()` | `Header(\`X-Api-Key\`, \`secret\`)` | Request header match |
+| `HeaderRegexp()` | `HeaderRegexp(\`X-Version\`, \`v\d+\`)` | Regex header match |
+| `Query()` | `Query(\`page\`, \`1\`)` | Query parameter match |
+| `ClientIP()` | `ClientIP(\`10.0.0.0/8\`)` | Source IP match (v3.0+) |
+| `Headers()` | `Headers(\`Content-Type\`, \`application/json\`)` | Multiple headers |
+
+### Combining Rules
+
+Use `&&` (AND) and `||` (OR) to combine matchers:
+
+```yaml
+# Host AND Path
+rule: "Host(`api.example.com`) && PathPrefix(`/v2`)"
+
+# Host OR Host
+rule: "Host(`example.com`) || Host(`www.example.com`)"
+
+# Complex conditions
+rule: "(Host(`api.example.com`) || Host(`api.internal`)) && PathPrefix(`/graphql`) && Header(`X-GraphQL`, `true`)"
+```
+
+## Router Priority
+
+When multiple routers match the same request, Traefik uses **priority** to decide:
+
+```yaml
+routers:
+  api-v2:
+    rule: "Host(`api.example.com`) && PathPrefix(`/v2`)"
+    priority: 10
+    service: api-v2
+
+  api:
+    rule: "Host(`api.example.com`)"
+    service: api
+```
+
+<Callout variant="note" title="Priority Rules">
+- Higher number = higher priority
+- If no priority is set, the **longest rule** wins (by character count)
+- Explicit priority always wins over rule-length comparison
+- If priorities are equal and rules have the same length, the first router discovered wins
+</Callout>
+
+## Next Steps
+
+Now that you understand the architecture, let's dive into [EntryPoints](/learn/entrypoints).

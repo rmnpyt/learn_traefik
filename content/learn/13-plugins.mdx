@@ -1,0 +1,251 @@
+---
+title: Plugins
+chapter: 13
+track: production
+difficulty: advanced
+description: Finding, installing, and developing Traefik plugins — extending middleware capabilities.
+---
+
+## What are Plugins?
+
+Plugins are **custom middleware** built with Go that extend Traefik's capabilities. They're distributed via the Traefik Plugin Catalog and can be installed without modifying Traefik's core.
+
+<Callout variant="info">
+Plugins were introduced in Traefik v2.5 and use the WebAssembly (wasm) sandbox. Starting with v3.2, plugins run as native Go plugins or in the wasm sandbox.
+</Callout>
+
+## Plugin Ecosystem
+
+The [Traefik Plugin Catalog](https://plugins.traefik.io) hosts 100+ community and official plugins:
+
+### Traffic Management
+- **GeoIP blocking** — Block traffic based on geographic location
+- **Real IP** — Extract real client IP from headers
+- **Traffic mirroring** — Advanced traffic shadowing
+
+### Security
+- **OIDC Auth** — OpenID Connect authentication
+- **Coraza WAF** — Web application firewall (OWASP CRS)
+- **JWT Middleware** — JWT validation
+- **CrowdSec Bouncer** — CrowdSec integration
+
+### Observability
+- **Logrus** — Enhanced logging
+- **Request Inspector** — Debug request headers and body
+- **Prometheus histogram** — Custom histogram buckets
+
+### Transformations
+- **Body manipulation** — Add/modify request bodies
+- **URL rewriting** — Advanced URL transformations
+- **Header injection** — Dynamic header values
+
+## Finding Plugins
+
+```bash
+# Via the CLI (if plugin-catalog is configured)
+traefik plugin list
+
+# Browse the catalog
+open https://plugins.traefik.io
+```
+
+## Installing Plugins
+
+### Plugin Configuration
+
+```yaml
+# Static configuration
+experimental:
+  plugins:
+    geoblock:
+      moduleName: "github.com/traefik/plugin-geoblock"
+      version: "v0.2.0"
+
+    realip:
+      moduleName: "github.com/traefik/plugin-realip"
+      version: "v0.1.0"
+```
+
+### Using Plugins as Middleware
+
+```yaml
+# Dynamic configuration
+http:
+  middlewares:
+    geo-filter:
+      plugin:
+        geoblock:
+          allowLocal: true
+          blockedCountries:
+            - "XX"
+            - "YY"
+          dbPath: "/etc/traefik/geoip/GeoLite2-Country.mmdb"
+
+    real-ip:
+      plugin:
+        realip:
+          proxyFQDN: []
+          trustedIPs:
+            - "10.0.0.0/8"
+            - "172.16.0.0/12"
+
+  routers:
+    api:
+      rule: "Host(`api.example.com`)"
+      middlewares:
+        - geo-filter
+        - real-ip
+      service: api-service
+```
+
+## Developing Plugins
+
+### Project Structure
+
+```
+my-plugin/
+├── go.mod
+├── go.sum
+├── main.go
+├── .traefik.yml       # Plugin manifest
+└── README.md
+```
+
+### Plugin Manifest (.traefik.yml)
+
+```yaml
+displayName: My Custom Plugin
+type: middleware
+import: github.com/myuser/my-plugin
+summary: "A custom Traefik plugin for..."
+testData:
+  headerName: X-Debug
+  headerValue: "true"
+iconPath: .assets/icon.png
+```
+
+### Basic Plugin Example
+
+```go
+package main
+
+import (
+	"context"
+	"net/http"
+)
+
+type Config struct {
+	HeaderName  string `json:"headerName,omitempty"`
+	HeaderValue string `json:"headerValue,omitempty"`
+}
+
+func CreateConfig() *Config {
+	return &Config{
+		HeaderName:  "X-Custom",
+		HeaderValue: "default",
+	}
+}
+
+type MyPlugin struct {
+	next   http.Handler
+	name   string
+	config *Config
+}
+
+func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+	return &MyPlugin{
+		next:   next,
+		name:   name,
+		config: config,
+	}, nil
+}
+
+func (m *MyPlugin) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	req.Header.Set(m.config.HeaderName, m.config.HeaderValue)
+	m.next.ServeHTTP(rw, req)
+}
+```
+
+<Callout variant="tip" title="Plugin Development Tips">
+- Plugins must implement the `ServeHTTP` handler interface
+- Configuration is JSON-serialized from YAML
+- Test locally with the `file` provider before deploying
+- Use the `testData` field in .traefik.yml for testing
+- Follow semantic versioning for your plugin releases
+</Callout>
+
+## Plugin Sandbox (WASM)
+
+Since v3.2, plugins can run in a WebAssembly sandbox for security isolation:
+
+```yaml
+experimental:
+  plugins:
+    my-plugin:
+      moduleName: "github.com/myuser/my-plugin"
+      version: "v1.0.0"
+      wasm: true   # Run in WASM sandbox
+```
+
+<Callout variant="info">
+The WASM sandbox provides memory safety and resource limits. Native plugins have better performance but less isolation. Choose based on your security requirements.
+</Callout>
+
+## Plugin Performance Considerations
+
+- Each plugin call adds latency (typically less than 1ms for simple plugins)
+- WASM plugins have higher overhead than native
+- Chain plugins carefully — each additional plugin adds processing time
+- Use built-in middleware when it meets your needs before reaching for a plugin
+
+## Popular Plugin Examples
+
+### GeoIP Blocking
+
+```yaml
+http:
+  middlewares:
+    geo-block:
+      plugin:
+        geoblock:
+          allowLocal: true
+          blockedCountries:
+            - "RU"
+            - "CN"
+            - "KP"
+          dbPath: "/etc/traefik/geoip/GeoLite2-Country.mmdb"
+```
+
+### Real IP Extraction
+
+```yaml
+http:
+  middlewares:
+    real-ip:
+      plugin:
+        realip:
+          trustedIPs:
+            - "10.0.0.0/8"
+```
+
+### OIDC Authentication
+
+```yaml
+http:
+  middlewares:
+    oidc:
+      plugin:
+        oidc:
+          issuerUrl: "https://accounts.example.com"
+          clientId: "traefik"
+          clientSecret: "secret"
+          redirectUrl: "https://app.example.com/callback"
+          scopes:
+            - "openid"
+            - "profile"
+            - "email"
+```
+
+<Callout variant="success" title="Next Chapter">
+Explore the [Ecosystem](/learn/ecosystem) — Traefik Proxy vs Hub vs Enterprise vs AI Gateway.
+</Callout>

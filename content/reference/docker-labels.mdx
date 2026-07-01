@@ -1,0 +1,157 @@
+---
+title: Docker Labels Reference
+---
+
+Complete reference for Traefik Docker labels.
+
+## Core Labels
+
+```yaml
+# Enable Traefik for this container
+traefik.enable=true
+
+# Network to use
+traefik.docker.network=traefik-net
+
+# Override container IP (behind NAT)
+traefik.docker.ip=192.168.1.100
+```
+
+## Router Labels
+
+```yaml
+# Router rule
+traefik.http.routers.myapp.rule=Host(`example.com`)
+
+# EntryPoints
+traefik.http.routers.myapp.entrypoints=websecure
+
+# Service to route to
+traefik.http.routers.myapp.service=myapp
+
+# Priority
+traefik.http.routers.myapp.priority=10
+
+# Middlewares
+traefik.http.routers.myapp.middlewares=auth,rate-limit
+
+# TLS
+traefik.http.routers.myapp.tls=true
+traefik.http.routers.myapp.tls.certresolver=letsencrypt
+traefik.http.routers.myapp.tls.domains[0].main=example.com
+traefik.http.routers.myapp.tls.domains[0].sans=www.example.com
+```
+
+## Router Rule Syntax
+
+```yaml
+# Host matching
+traefik.http.routers.myapp.rule=Host(`example.com`)
+traefik.http.routers.myapp.rule=Host(`example.com`) || Host(`www.example.com`)
+
+# Path matching
+traefik.http.routers.myapp.rule=Host(`example.com`) && PathPrefix(`/api`)
+
+# Header matching
+traefik.http.routers.myapp.rule=Host(`example.com`) && Header(`X-Region`, `us`)
+
+# Method matching
+traefik.http.routers.myapp.rule=Host(`api.example.com`) && Method(`GET`)
+```
+
+## Service Labels
+
+```yaml
+# Backend port
+traefik.http.services.myapp.loadbalancer.server.port=3000
+
+# Backend URL (override)
+traefik.http.services.myapp.loadbalancer.server.url=http://10.0.0.1:3000
+
+# Load balancer strategy
+traefik.http.services.myapp.loadbalancer.strategy=p2c
+
+# Health check
+traefik.http.services.myapp.loadbalancer.healthcheck.path=/health
+traefik.http.services.myapp.loadbalancer.healthcheck.interval=30s
+traefik.http.services.myapp.loadbalancer.healthcheck.timeout=3s
+
+# Sticky sessions
+traefik.http.services.myapp.loadbalancer.sticky.cookie.name=_session
+traefik.http.services.myapp.loadbalancer.sticky.cookie.httponly=true
+traefik.http.services.myapp.loadbalancer.sticky.cookie.secure=true
+
+# Pass Host header
+traefik.http.services.myapp.loadbalancer.passhostheader=true
+
+# Response forwarding
+traefik.http.services.myapp.loadbalancer.responseforwarding.flushinterval=100ms
+```
+
+## Middleware Labels
+
+```yaml
+# Rate limiting
+traefik.http.middlewares.rate-limit.ratelimit.average=100
+traefik.http.middlewares.rate-limit.ratelimit.burst=50
+traefik.http.middlewares.rate-limit.ratelimit.period=1m
+
+# BasicAuth
+traefik.http.middlewares.auth.basicauth.users=admin:$$2y$$05$$...
+
+# Headers
+traefik.http.middlewares.sec-headers.headers.framedeny=true
+traefik.http.middlewares.sec-headers.headers.sslredirect=true
+traefik.http.middlewares.sec-headers.headers.stsseconds=31536000
+
+# IP allowlist
+traefik.http.middlewares.allowlist.ipallowlist.sourcerange=10.0.0.0/8
+
+# Redirect
+traefik.http.middlewares.redirect-https.redirectscheme.scheme=https
+traefik.http.middlewares.redirect-https.redirectscheme.permanent=true
+
+# Strip prefix
+traefik.http.middlewares.strip-api.stripprefix.prefixes=/api
+
+# Compress
+traefik.http.middlewares.compress.compress.excludedcontenttypes=text/event-stream
+```
+
+## TCP Labels
+
+```yaml
+# TCP router
+traefik.tcp.routers.db.rule=HostSNI(`*`)
+traefik.tcp.routers.db.entrypoints=postgres
+traefik.tcp.routers.db.service=db
+traefik.tcp.routers.db.tls=true
+traefik.tcp.routers.db.tls.passthrough=true
+
+# TCP service
+traefik.tcp.services.db.loadbalancer.server.port=5432
+```
+
+## UDP Labels
+
+```yaml
+# UDP router
+traefik.udp.routers.dns.entrypoints=dns
+traefik.udp.routers.dns.service=dns
+
+# UDP service
+traefik.udp.services.dns.loadbalancer.server.port=53
+```
+
+## Provider-Specific Labels
+
+```yaml
+# Use a specific network
+traefik.docker.network=my-network
+
+# Only on specific Docker Swarm node
+traefik.docker.swarmmode=true
+
+# Constraints
+traefik.docker.constraints=Label(`traefik.environment`, `production`)
+```

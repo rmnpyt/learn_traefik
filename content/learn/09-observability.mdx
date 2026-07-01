@@ -1,0 +1,279 @@
+---
+title: Observability
+chapter: 9
+track: observability
+difficulty: intermediate
+description: Metrics with Prometheus/OpenTelemetry, access logs, tracing, and health monitoring.
+---
+
+## Observability Overview
+
+Traefik provides comprehensive observability out of the box:
+
+- **Metrics** — Prometheus, OpenTelemetry, InfluxDB, Datadog, StatsD
+- **Access Logs** — Structured (JSON) or common log format
+- **Tracing** — OpenTelemetry, Jaeger, Zipkin, Datadog
+- **Health Checking** — Built-in ping endpoint
+
+## Metrics
+
+### Prometheus
+
+```yaml
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    entryPoint: metrics       # Dedicated entrypoint for metrics
+    buckets:
+      - 0.1
+      - 0.3
+      - 1.2
+      - 5.0
+
+entryPoints:
+  metrics:
+    address: ":8082"
+```
+
+<Callout variant="tip">
+Use a **dedicated entrypoint** for metrics so they're not exposed publicly. Or protect the metrics endpoint with middleware.
+</Callout>
+
+### Key Prometheus Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `traefik_entrypoint_requests_total` | Counter | Total requests per entrypoint |
+| `traefik_entrypoint_request_duration_seconds` | Histogram | Request duration per entrypoint |
+| `traefik_router_requests_total` | Counter | Total requests per router |
+| `traefik_router_request_duration_seconds` | Histogram | Request duration per router |
+| `traefik_service_requests_total` | Counter | Total requests per service |
+| `traefik_service_request_duration_seconds` | Histogram | Request duration per service |
+| `traefik_service_server_up` | Gauge | Backend server health (1=up, 0=down) |
+
+### OpenTelemetry
+
+```yaml
+metrics:
+  otlp:
+    endpoint: "otel-collector:4317"
+    protocol: grpc
+    headers:
+      api-key: "my-key"
+    addEntryPointsLabels: true
+    addServicesLabels: true
+```
+
+### Datadog
+
+```yaml
+metrics:
+  datadog:
+    address: "127.0.0.1:8125"
+    pushInterval: 10s
+    addEntryPointsLabels: true
+    addServicesLabels: true
+```
+
+## Access Logs
+
+### Configuration
+
+```yaml
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json     # json or common
+  bufferingSize: 100
+  filters:
+    statusCodes:
+      - "200-299"
+      - "400-499"
+    retries: true
+    minDuration: 10ms
+  fields:
+    headers:
+      defaultMode: keep
+      names:
+        User-Agent: keep
+        Authorization: drop
+        X-Api-Key: drop
+      redirections: true
+```
+
+### Log Format
+
+JSON format example:
+
+```json
+{
+  "ClientHost": "192.168.1.100",
+  "ClientUsername": "-",
+  "RequestAddr": "example.com",
+  "RequestHost": "example.com",
+  "RequestMethod": "GET",
+  "RequestPath": "/api/users",
+  "RequestProtocol": "HTTP/2.0",
+  "Duration": 45000000,
+  "OriginDuration": 42000000,
+  "RouterName": "api-router",
+  "ServiceName": "api-service",
+  "ServiceURL": "http://10.0.0.1:8080",
+  "StatusCode": 200,
+  "RequestCount": 42,
+  "TLSVersion": "1.3",
+  "DownstreamStatus": 200,
+  "DownstreamContentSize": 1234,
+  "RequestContentSize": 0,
+  "RequestLine": "GET /api/users HTTP/2.0",
+  "FrontendName": "api-router",
+  "BackendURL": "http://10.0.0.1:8080",
+  "BackendName": "api-service"
+}
+```
+
+## Distributed Tracing
+
+### OpenTelemetry Tracing
+
+```yaml
+tracing:
+  otlp:
+    endpoint: "otel-collector:4317"
+    protocol: grpc
+    headers:
+      api-key: "my-key"
+    samplingRate: 0.1       # Sample 10% of requests
+    attributes:
+      - key: environment
+        value: production
+```
+
+### Jaeger
+
+```yaml
+tracing:
+  jaeger:
+    samplingServerURL: "http://jaeger:5778/sampling"
+    samplingType: const
+    samplingParam: 1
+    localAgentHostPort: "jaeger:6831"
+    propagation: "jaeger"
+    traceContextHeaderName: "uber-trace-id"
+```
+
+### Zipkin
+
+```yaml
+tracing:
+  zipkin:
+    httpEndpoint: "http://zipkin:9411/api/v2/spans"
+    sameSpan: false
+    id128Bit: true
+    sampleRate: 1.0
+```
+
+### Datadog
+
+```yaml
+tracing:
+  datadog:
+    localAgentHostPort: "dd-agent:8126"
+    globalTag: "env:production"
+    prioritySampling: true
+```
+
+## Health Checking
+
+Traefik has a built-in health check endpoint:
+
+```yaml
+entryPoints:
+  ping:
+    address: ":8081"
+
+ping:
+  entryPoint: ping
+```
+
+```bash
+curl http://localhost:8081/ping
+# OK
+```
+
+<Callout variant="tip">
+The ping endpoint is useful for load balancer health checks and container orchestration probes (liveness/readiness in Kubernetes).
+</Callout>
+
+### Kubernetes Probes
+
+For Traefik itself in Kubernetes:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /ping
+    port: 8081
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ping
+    port: 8081
+  initialDelaySeconds: 10
+  periodSeconds: 10
+```
+
+## Logging
+
+### General Logging
+
+```yaml
+log:
+  level: INFO           # DEBUG, PANIC, FATAL, ERROR, WARN, INFO
+  filePath: /var/log/traefik/traefik.log
+  format: json          # json or common
+```
+
+## Dashboard
+
+Traefik's web dashboard provides real-time visibility:
+
+```yaml
+api:
+  dashboard: true
+  debug: true
+
+entryPoints:
+  dashboard:
+    address: ":8080"
+```
+
+Access at `http://localhost:8080/dashboard/` (note the trailing slash).
+
+<Callout variant="warning">
+The dashboard shows your full configuration including routing rules and service endpoints. Always protect it with authentication and an IP allowlist.
+</Callout>
+
+## Grafana Dashboard
+
+A sample Prometheus query for a Grafana dashboard:
+
+```promql
+# Request rate by router (requests/sec)
+sum by (router) (rate(traefik_router_requests_total[5m]))
+
+# P99 latency by service
+histogram_quantile(0.99, sum by (le, service) (rate(traefik_service_request_duration_seconds_bucket[5m])))
+
+# Error rate
+sum(rate(traefik_router_requests_total{code=~"5.."}[5m])) / sum(rate(traefik_router_requests_total[5m]))
+
+# Backend server health
+sum by (server) (traefik_service_server_up)
+```
+
+<Callout variant="success" title="Next Chapter">
+Explore the [API & Dashboard](/learn/api-dashboard) and how to manage Traefik programmatically.
+</Callout>

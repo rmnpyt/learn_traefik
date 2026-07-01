@@ -1,0 +1,208 @@
+---
+title: EntryPoints
+chapter: 3
+track: beginner
+difficulty: beginner
+description: Configuring EntryPoints — ports, protocols, TLS termination, HTTP to HTTPS redirect.
+---
+
+## What is an EntryPoint?
+
+An EntryPoint defines a **network port** that Traefik listens on. It is the entry door for all incoming traffic. Every request must come through an EntryPoint.
+
+<Callout variant="info">
+EntryPoints are defined in **static configuration** (CLI flags or traefik.yml). They cannot be changed dynamically at runtime.
+</Callout>
+
+## Basic EntryPoint Configuration
+
+```yaml
+# Static configuration
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+```
+
+### Properties
+
+| Property | Description | Default |
+|----------|-------------|---------|
+| `address` | Listen address (host:port) | Required |
+| `transport` | TCP/UDP transport settings | — |
+| `http` | HTTP-specific configuration | — |
+| `http3` | Enable HTTP/3 (QUIC) | false |
+| `forwardedHeaders` | Trusted proxies for X-Forwarded-* | — |
+| `proxyProtocol` | Proxy Protocol support | — |
+
+## Common EntryPoint Patterns
+
+### Standard Web + Web Secure
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+```
+
+<Callout variant="tip">
+This is the most common setup: HTTP on port 80 redirects to HTTPS on port 443. The `web` entrypoint never serves actual application traffic, only redirects.
+</Callout>
+
+### Internal Services on Dedicated Ports
+
+```yaml
+entryPoints:
+  api:
+    address: ":8080"
+  metrics:
+    address: ":8082"
+  dashboard:
+    address: ":8083"
+    http:
+      middlewares:
+        - auth@file
+```
+
+### TCP and UDP EntryPoints
+
+```yaml
+entryPoints:
+  postgres:
+    address: ":5432"
+  mongodb:
+    address: ":27017"
+  dns:
+    address: ":53/udp"
+```
+
+## HTTP/3 (QUIC) EntryPoints
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    http3:
+      advertisedPort: 443
+
+http3:
+  advertisedPort: 443
+```
+
+<Callout variant="warning" title="HTTP/3 Requirements">
+HTTP/3 uses UDP. You must open UDP port 443 in your firewall and load balancer. Not all cloud LBs support HTTP/3 pass-through.
+</Callout>
+
+## EntryPoint Configuration Reference
+
+### Transport Configuration
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    transport:
+      lifeCycle:
+        requestAcceptGraceTimeout: 5s
+        graceTimeOut: 10s
+
+      respondingTimeouts:
+        readTimeout: 30s
+        writeTimeout: 30s
+        idleTimeout: 180s
+```
+
+### Forwarded Headers
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    forwardedHeaders:
+      trustedIPs:
+        - "10.0.0.0/8"
+        - "172.16.0.0/12"
+      insecure: false  # true = trust all X-Forwarded-* headers
+```
+
+<Callout variant="warning" title="Security Warning">
+Only set `forwardedHeaders.insecure: true` in development. In production, always restrict with `trustedIPs` to avoid IP spoofing.
+</Callout>
+
+### Proxy Protocol
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    proxyProtocol:
+      trustedIPs:
+        - "10.0.0.0/8"
+```
+
+Proxy Protocol is used when Traefik sits behind a load balancer that sets the protocol (like AWS NLB with Proxy Protocol v2).
+
+## EntryPoints and Routers
+
+Once EntryPoints are defined, routers reference them:
+
+```yaml
+# Dynamic configuration
+http:
+  routers:
+    web-app:
+      rule: "Host(`example.com`)"
+      entryPoints:
+        - websecure    # Only listens on the websecure entrypoint
+      service: app
+```
+
+If a router doesn't specify `entryPoints`, it matches **all** entrypoints. Specify entryPoints to restrict which ports a router listens on.
+
+## EntryPoint Middlewares
+
+Since v3.0, you can attach middlewares **directly to EntryPoints**:
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    http:
+      middlewares:
+        - rate-limit@file
+        - security-headers@file
+```
+
+<Callout variant="note">
+EntryPoint-level middlewares run BEFORE router matching. This is useful for global rate limiting, IP allowlisting, and security headers that apply to all traffic regardless of the target router.
+</Callout>
+
+## Port Binding in Docker
+
+When running Traefik in Docker, map entrypoint ports:
+
+```yaml
+services:
+  traefik:
+    image: traefik:v3.3
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"   # API dashboard (internal)
+    # For UDP (HTTP/3):
+      - "443:443/udp"
+```
+
+<Callout variant="success" title="Next Chapter">
+Learn how to configure [Routers & Rules](/learn/routers) to direct traffic from entrypoints to your services.
+</Callout>

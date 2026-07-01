@@ -1,0 +1,272 @@
+---
+title: Providers
+chapter: 7
+track: beginner
+difficulty: intermediate
+description: Docker, Kubernetes, File, Consul, and other providers for dynamic configuration.
+---
+
+## What is a Provider?
+
+A **Provider** is an infrastructure component that Traefik watches for changes. When Traefik detects a change (container started, label updated, file changed), it dynamically updates its routing configuration — **without restarting or reloading**.
+
+<Callout variant="info" title="The Provider Concept">
+Providers are Traefik's superpower. Instead of you manually writing routing rules, Traefik learns about your services by watching your infrastructure in real-time.
+</Callout>
+
+## Docker Provider
+
+The most common provider for single-server and Docker Compose deployments.
+
+### Static Configuration
+
+```yaml
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    network: traefik-net
+    exposedByDefault: false
+    watch: true
+    swarmMode: false
+```
+
+### Docker Labels Reference
+
+| Label | Description |
+|-------|-------------|
+| `traefik.enable=true` | Enable discovery for this container (required if `exposedByDefault: false`) |
+| `traefik.http.routers.<name>.rule=Host(\`...\`)` | Router rule |
+| `traefik.http.routers.<name>.entrypoints=websecure` | EntryPoints |
+| `traefik.http.routers.<name>.tls.certresolver=letsencrypt` | TLS cert resolver |
+| `traefik.http.routers.<name>.middlewares=auth` | Middleware chain |
+| `traefik.http.services.<name>.loadbalancer.server.port=3000` | Backend port |
+| `traefik.http.middlewares.<name>.rateLimit.average=100` | Middleware definition |
+
+### Full Docker Example
+
+```yaml
+services:
+  traefik:
+    image: traefik:v3.3
+    command:
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@example.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./letsencrypt:/letsencrypt"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.example.com`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$2y$$05$$..."
+
+  whoami:
+    image: traefik/whoami
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`whoami.example.com`)"
+      - "traefik.http.routers.whoami.tls.certresolver=letsencrypt"
+      - "traefik.http.services.whoami.loadbalancer.server.port=80"
+```
+
+<Callout variant="warning" title="Docker Socket Warning">
+Mounting the Docker socket (`/var/run/docker.sock`) gives the container root-level access to Docker. Use read-only mode (`:ro`) and consider using socket proxies in production.
+</Callout>
+
+### Docker Swarm
+
+```yaml
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    swarmMode: true
+    swarmModeRefreshSeconds: 15
+```
+
+## Kubernetes Provider
+
+Traefik integrates with Kubernetes via **IngressRoute** CRDs (Custom Resource Definitions), offering more control than standard Ingress resources.
+
+### Install CRDs
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.3/docs/content/reference/dynamic-config/kubernetes-crd-definition-v1.yml
+```
+
+### Static Configuration
+
+```yaml
+providers:
+  kubernetesCRD:
+    namespaces:
+      - default
+      - production
+  kubernetesIngress:
+    namespaces:
+      - default
+```
+
+### IngressRoute Example
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: web-app-route
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`app.example.com`)
+      kind: Rule
+      services:
+        - name: app-service
+          port: 80
+      middlewares:
+        - name: rate-limit
+  tls:
+    certResolver: letsencrypt
+```
+
+### Middleware CRD
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+spec:
+  rateLimit:
+    average: 100
+    burst: 50
+```
+
+<Callout variant="info">
+The Kubernetes CRD provider is the recommended way to run Traefik on Kubernetes. It provides full access to all Traefik features, unlike the standard Ingress API which has limited capabilities.
+</Callout>
+
+## File Provider
+
+For environments without orchestrators, or for shared middleware/service definitions:
+
+```yaml
+providers:
+  file:
+    directory: /etc/traefik/dynamic/
+    watch: true
+```
+
+Example dynamic config file `/etc/traefik/dynamic/middlewares.yml`:
+
+```yaml
+http:
+  middlewares:
+    auth:
+      basicAuth:
+        users:
+          - "admin:$2y$05$xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+    security-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+```
+
+<Callout variant="tip">
+Use the File provider for **shared configuration** that doesn't belong to a specific container or service. This is especially useful for common middlewares (auth, rate limiting, security headers) that multiple routers reference.
+</Callout>
+
+## Consul / etcd / ZooKeeper Providers
+
+For service mesh and KV store-based environments:
+
+```yaml
+providers:
+  consul:
+    endpoints:
+      - "127.0.0.1:8500"
+    rootKey: "traefik"
+    watch: true
+
+  consulCatalog:
+    endpoints:
+      - "127.0.0.1:8500"
+    exposedByDefault: false
+
+  etcd:
+    endpoints:
+      - "127.0.0.1:2379"
+    rootKey: "/traefik"
+    watch: true
+
+  zookeeper:
+    endpoints:
+      - "127.0.0.1:2181"
+    rootKey: "/traefik"
+```
+
+## Redis Provider
+
+```yaml
+providers:
+  redis:
+    endpoints:
+      - "127.0.0.1:6379"
+    rootKey: "traefik"
+    password: "optional-password"
+    db: 0
+    watch: true
+```
+
+## HTTP Provider
+
+For external, API-driven configuration:
+
+```yaml
+providers:
+  http:
+    endpoint: "http://config-service:8080/config"
+    pollInterval: 30s
+    headers:
+      Authorization: "Bearer my-token"
+```
+
+<Callout variant="warning">
+The HTTP provider polls the endpoint at the specified interval. It does NOT support real-time updates. For dynamic config, use providers that support watching (Docker, Kubernetes, Consul, etcd).
+</Callout>
+
+## Nomad Provider
+
+```yaml
+providers:
+  nomad:
+    endpoint:
+      address: "http://127.0.0.1:4646"
+    exposedByDefault: false
+    watch: true
+```
+
+## Provider Constraints
+
+Filter which services Traefik discovers:
+
+```yaml
+providers:
+  docker:
+    constraints:
+      - "Label(`traefik.environment`, `production`)"
+      - "LabelExists(`traefik.enable`)"
+```
+
+<Callout variant="success" title="Next Chapter">
+Now that you understand providers, let's secure your services with [TLS & ACME](/learn/tls-acme).
+</Callout>

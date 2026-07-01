@@ -1,0 +1,269 @@
+---
+title: Middleware Catalog
+---
+
+Quick reference for all 30+ built-in Traefik middlewares organized by category.
+
+## Authentication
+
+### BasicAuth
+```yaml
+http:
+  middlewares:
+    auth:
+      basicAuth:
+        users:
+          - "admin:$2y$05$xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        realm: "Restricted"
+        removeHeader: true
+        headerField: "X-User"
+```
+
+### DigestAuth
+```yaml
+http:
+  middlewares:
+    digest-auth:
+      digestAuth:
+        users:
+          - "admin:realm:hash"
+        removeHeader: false
+```
+
+### ForwardAuth
+```yaml
+http:
+  middlewares:
+    fwd-auth:
+      forwardAuth:
+        address: "http://auth:9000/verify"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-User
+        tls:
+          ca: /certs/ca.pem
+```
+
+### IPAllowList
+```yaml
+http:
+  middlewares:
+    allow-ip:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+```
+
+### IPDenyList
+```yaml
+http:
+  middlewares:
+    deny-ip:
+      ipDenyList:
+        sourceRange:
+          - "203.0.113.0/24"
+```
+
+## Security Headers
+
+### Headers
+```yaml
+http:
+  middlewares:
+    sec-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsSeconds: 31536000
+        customRequestHeaders:
+          X-Custom: "value"
+        customResponseHeaders:
+          X-Powered-By: "Traefik"
+        accessControlAllowOriginList:
+          - "https://example.com"
+```
+
+## Traffic Control
+
+### RateLimit
+```yaml
+http:
+  middlewares:
+    ratelimit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1m
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+```
+
+### CircuitBreaker
+```yaml
+http:
+  middlewares:
+    cb:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.5"
+```
+
+### MaxConnections
+```yaml
+http:
+  middlewares:
+    maxconn:
+      maxConnections:
+        amount: 10
+        extractorFunc: "request.host"
+```
+
+### Buffering
+```yaml
+http:
+  middlewares:
+    buffer:
+      buffering:
+        maxRequestBodyBytes: 10485760
+        retryExpression: "IsNetworkError()"
+```
+
+### InFlightReq
+```yaml
+http:
+  middlewares:
+    inflight:
+      inFlightReq:
+        amount: 100
+        sourceCriterion:
+          requestHost: true
+```
+
+## Request Transformation
+
+### AddPrefix
+```yaml
+http:
+  middlewares:
+    add-prefix:
+      addPrefix:
+        prefix: "/api"
+```
+
+### StripPrefix
+```yaml
+http:
+  middlewares:
+    strip-prefix:
+      stripPrefix:
+        prefixes:
+          - "/api"
+          - "/v2"
+        forceSlash: true
+```
+
+### ReplacePath
+```yaml
+http:
+  middlewares:
+    replace-path:
+      replacePath:
+        path: "/app"
+```
+
+### ReplacePathRegex
+```yaml
+http:
+  middlewares:
+    replace-path-regex:
+      replacePathRegex:
+        regex: "^/api/v1/(.*)"
+        replacement: "/$1"
+```
+
+### RedirectScheme
+```yaml
+http:
+  middlewares:
+    redirect:
+      redirectScheme:
+        scheme: https
+        port: "443"
+        permanent: true
+```
+
+### RedirectRegex
+```yaml
+http:
+  middlewares:
+    redirect-regex:
+      redirectRegex:
+        regex: "^http://"
+        replacement: "https://"
+        permanent: true
+```
+
+### URLRewrite
+```yaml
+http:
+  middlewares:
+    url-rewrite:
+      urlRewrite:
+        regex: "^/old/(.*)"
+        replacement: "/new/$1"
+```
+
+## Compression
+
+### Compress
+```yaml
+http:
+  middlewares:
+    compress:
+      compress:
+        excludedContentTypes:
+          - "text/event-stream"
+```
+
+## Error Handling
+
+### Errors
+```yaml
+http:
+  middlewares:
+    errors:
+      errors:
+        status:
+          - "404"
+          - "500-599"
+        service: error-service
+        query: "/{status}.html"
+```
+
+## Retry
+
+### Retry
+```yaml
+http:
+  middlewares:
+    retry:
+      retry:
+        attempts: 3
+        initialInterval: 100ms
+```
+
+## Plugin Middlewares
+
+```yaml
+http:
+  middlewares:
+    geo-block:
+      plugin:
+        geoblock:
+          allowLocal: true
+          blockedCountries:
+            - "XX"
+```

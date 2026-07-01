@@ -1,0 +1,380 @@
+---
+title: Production Deployment
+chapter: 15
+track: production
+difficulty: advanced
+description: High-availability deployment, monitoring, backup, scaling, CI/CD, and migration guide.
+---
+
+## Production Overview
+
+Deploying Traefik in production requires consideration of high availability, security, monitoring, and operational practices. This chapter covers everything from single-node to multi-region deployments.
+
+<Callout variant="warning">
+This chapter assumes you're familiar with all previous chapters. If you're new to Traefik, start with [Introduction](/learn/introduction).
+</Callout>
+
+## Deployment Architectures
+
+### Single-Node (Simple)
+
+```
+Internet → Traefik (single instance) → Backend Services
+```
+
+Best for: Development, staging, low-traffic production.
+
+### High-Availability (Active-Active)
+
+```
+          ┌→ Traefik A → Backend Pool
+Internet ─┤
+          └→ Traefik B → Backend Pool
+```
+
+Best for: Production, high-traffic, zero-downtime deployments.
+
+### Multi-Region
+
+```
+          ┌→ Traefik (us-east) → Backend (us-east)
+Internet ─┼→ Traefik (eu-west) → Backend (eu-west)
+          └→ Traefik (ap-southeast) → Backend (ap-southeast)
+```
+
+Best for: Global applications, disaster recovery, latency optimization.
+
+## Docker Compose HA Setup
+
+```yaml
+version: "3.8"
+
+services:
+  traefik-primary:
+    image: traefik:v3.3
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.constraints=Label(`traefik.replica`, `primary`)"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--api.dashboard=true"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./letsencrypt:/letsencrypt"
+      - "./dynamic:/etc/traefik/dynamic"
+    labels:
+      - "traefik.replica=primary"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  traefik-secondary:
+    image: traefik:v3.3
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.constraints=Label(`traefik.replica`, `secondary`)"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./letsencrypt:/letsencrypt"
+      - "./dynamic:/etc/traefik/dynamic"
+    labels:
+      - "traefik.replica=secondary"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+```
+
+<Callout variant="note" title="HA Considerations">
+- Use a shared storage for ACME certificates (NFS, EFS, or store separately per instance)
+- Each instance manages its own Let's Encrypt certificates
+- Front with a TCP load balancer (AWS NLB, HAProxy, etc.)
+- Use shared dynamic configuration volume for consistency
+</Callout>
+
+## Kubernetes HA Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+    spec:
+      serviceAccountName: traefik
+      containers:
+        - name: traefik
+          image: traefik:v3.3
+          args:
+            - "--providers.kubernetesCRD=true"
+            - "--entrypoints.web.address=:80"
+            - "--entrypoints.websecure.address=:443"
+            - "--api.dashboard=true"
+          ports:
+            - name: web
+              containerPort: 80
+            - name: websecure
+              containerPort: 443
+            - name: dashboard
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8080
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+spec:
+  type: LoadBalancer
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
+    - name: websecure
+      port: 443
+      targetPort: websecure
+  selector:
+    app: traefik
+```
+
+## Monitoring Setup
+
+### Prometheus + Grafana
+
+```yaml
+# docker-compose.yml
+services:
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3000:3000"
+```
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: "traefik"
+    static_configs:
+      - targets: ["traefik:8082"]   # Metrics entrypoint
+```
+
+### Uptime Monitoring
+
+```bash
+# Health check endpoint
+curl -f http://localhost:8081/ping
+
+# Check ACME certificate expiry
+echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | \
+  openssl x509 -noout -enddate
+
+# Check router status via API
+curl -s http://localhost:8080/api/http/routers | jq '.'
+```
+
+## Backup Strategy
+
+### What to Backup
+
+| Component | Location | Frequency |
+|-----------|----------|-----------|
+| ACME certificates | `/letsencrypt/acme.json` | Daily |
+| Dynamic config | `/etc/traefik/dynamic/` | Per change |
+| Static config | `traefik.yml` | Per change |
+| Docker Compose | Deploy scripts | Per change |
+
+### ACME Backup Script
+
+```bash
+#!/bin/bash
+# Backup ACME certificates
+BACKUP_DIR="/backups/traefik/$(date +%Y%m%d)"
+mkdir -p "$BACKUP_DIR"
+cp /letsencrypt/acme.json "$BACKUP_DIR/"
+gpg --encrypt --recipient admin@example.com "$BACKUP_DIR/acme.json"
+aws s3 cp "$BACKUP_DIR/acme.json.gpg" "s3://my-backups/traefik/"
+```
+
+<Callout variant="warning" title="Certificate Backup is Critical">
+ACME certificates are rate-limited by Let's Encrypt (50 certs/domain/week). Losing your `acme.json` can result in service disruption while waiting for rate limits to reset.
+</Callout>
+
+## CI/CD Pipeline
+
+### GitHub Actions Example
+
+```yaml
+name: Deploy Traefik
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "traefik/**"
+      - "docker-compose.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/traefik
+            git pull
+            docker compose pull traefik
+            docker compose up -d traefik
+            docker image prune -f
+```
+
+## Scaling Traefik
+
+### Vertical Scaling
+
+- **CPU**: Traefik is CPU-bound for TLS termination. More cores = more concurrent TLS connections
+- **Memory**: Typically 100-500MB for moderate traffic
+- **Network**: GbE+ recommended
+
+### Horizontal Scaling
+
+- Run multiple Traefik instances behind a TCP load balancer
+- Use shared or per-instance ACME storage
+- Ensure all instances have the same dynamic configuration
+
+### Performance Tuning
+
+```yaml
+# Static configuration
+entryPoints:
+  websecure:
+    address: ":443"
+    transport:
+      respondingTimeouts:
+        readTimeout: 30s
+        writeTimeout: 30s
+        idleTimeout: 360s   # Longer for keep-alive
+
+# Connection limits
+http:
+  middlewares:
+    conn-limit:
+      inFlightReq:
+        amount: 1000
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+```
+
+## Memory Optimization
+
+```yaml
+# Reduce memory footprint
+accessLog:
+  bufferingSize: 100
+
+metrics:
+  prometheus:
+    buckets:
+      - 0.1
+      - 0.5
+      - 1.0
+    addEntryPointsLabels: false
+    addServicesLabels: true
+```
+
+## Migration Guide
+
+### From nginx to Traefik
+
+| nginx Concept | Traefik Equivalent |
+|---------------|-------------------|
+| `server` block | Router |
+| `location` block | PathPrefix middleware or router rule |
+| `upstream` block | Service |
+| `server_name` | `Host()` rule |
+| `ssl_certificate` | `certificatesResolvers` or `tls.certificates` |
+| `proxy_pass` | Service → server URL |
+| nginx config manual reload | Traefik: auto (providers) |
+
+### Migration Steps
+
+1. Install Traefik alongside nginx on a different port
+2. Add Traefik entrypoints on ports 8080 and 8443 (non-standard)
+3. Configure Docker provider labels on existing containers
+4. Test routing via Traefik (hit port 8080 directly)
+5. Switch your load balancer to point to Traefik (ports 80/443)
+6. Remove nginx
+
+## Production Checklist
+
+- [ ] EntryPoints configured correctly (HTTP→HTTPS redirect)
+- [ ] Let's Encrypt ACME with staging tested first
+- [ ] Dashboard protected with auth + IP allowlist
+- [ ] `exposedByDefault: false` for Docker provider
+- [ ] Health checks on all services
+- [ ] Rate limiting on public endpoints
+- [ ] Metrics collection (Prometheus/OTel)
+- [ ] Access logs enabled and rotated
+- [ ] Automatic backup of `acme.json`
+- [ ] Monitoring/alerting configured
+- [ ] CI/CD pipeline for config changes
+- [ ] TLS options hardened (min TLS 1.2)
+- [ ] Docker socket read-only (or socket proxy)
+- [ ] Resource limits set on Traefik container
+- [ ] Restart policy: `unless-stopped`
+
+## Troubleshooting Production Issues
+
+| Symptom | Likely Cause | Solution |
+|---------|-------------|----------|
+| 502 Bad Gateway | Backend service down | Check health check config, service status |
+| 503 Service Unavailable | All backends unhealthy | Check service health endpoints |
+| Certificate errors | ACME failure | Check `acme.json`, rate limits, DNS |
+| High latency | Insufficient resources | Scale up CPU, tune timeouts |
+| Connection refused | Entrypoint port not bound | Check port mappings |
+| No route to host | Container network issue | Verify Docker network config |
+| Rate limiting errors | Too many requests | Adjust `rateLimit` config |
+| TLS handshake errors | TLS version mismatch | Check `tls.options` configuration |
+
+<Callout variant="success" title="Congratulations!">
+You've completed the Traefik Learn Guide. You now have comprehensive knowledge of Traefik from basic setup to production deployment. Use the [Playground](/playground/config-editor) to experiment, and the [Reference](/reference/middleware-catalog) for quick lookups.
+</Callout>

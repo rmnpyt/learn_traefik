@@ -1,0 +1,176 @@
+---
+title: EntryPoints Reference
+---
+
+Quick reference for all EntryPoint configuration options.
+
+## Basic EntryPoint
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+```
+
+## EntryPoint with All Options
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    transport:
+      lifeCycle:
+        requestAcceptGraceTimeout: 5s
+        graceTimeOut: 10s
+      respondingTimeouts:
+        readTimeout: 30s
+        writeTimeout: 30s
+        idleTimeout: 180s
+    http:
+      redirections:
+        entryPoint:
+          to: web
+          scheme: http
+          permanent: true
+      middlewares:
+        - security-headers@file
+      encodeQuerySemicolons: true
+    http3:
+      advertisedPort: 443
+    forwardedHeaders:
+      trustedIPs:
+        - "10.0.0.0/8"
+      insecure: false
+    proxyProtocol:
+      trustedIPs:
+        - "10.0.0.0/8"
+```
+
+## HTTP to HTTPS Redirect
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+```
+
+## Internal EntryPoints
+
+```yaml
+entryPoints:
+  metrics:
+    address: ":8082"
+  ping:
+    address: ":8081"
+  dashboard:
+    address: ":8083"
+```
+
+## TCP EntryPoints
+
+```yaml
+entryPoints:
+  postgres:
+    address: ":5432"
+  mongodb:
+    address: ":27017"
+  mysql:
+    address: ":3306"
+  redis:
+    address: ":6379"
+  kafka:
+    address: ":9092"
+  rabbitmq:
+    address: ":5672"
+```
+
+## UDP EntryPoints
+
+```yaml
+entryPoints:
+  dns:
+    address: ":53/udp"
+  syslog:
+    address: ":514/udp"
+  custom-udp:
+    address: ":1234/udp"
+```
+
+## Mixed TCP/UDP
+
+```yaml
+entryPoints:
+  dns:
+    address: ":53/tcp"
+  dns-udp:
+    address: ":53/udp"
+```
+
+## HTTPS with HTTP/3
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    http3:
+      advertisedPort: 443
+```
+
+## Port Range
+
+```yaml
+entryPoints:
+  app-range:
+    address: ":8000-9000"
+```
+
+## Common Port Refresher
+
+| Port | Service |
+|------|---------|
+| 80 | HTTP |
+| 443 | HTTPS |
+| 3000 | Common Node.js apps |
+| 5432 | PostgreSQL |
+| 27017 | MongoDB |
+| 6379 | Redis |
+| 3306 | MySQL |
+| 5672 | RabbitMQ |
+| 9092 | Kafka |
+| 8080 | Common dev port / Traefik dashboard |
+
+## Named EntryPoints Pattern
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+    http3: {}
+    transport:
+      respondingTimeouts:
+        idleTimeout: 360s
+
+  metrics:
+    address: ":8082"
+
+  ping:
+    address: ":8081"
+```

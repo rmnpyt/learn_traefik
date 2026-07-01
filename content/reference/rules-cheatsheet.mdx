@@ -1,0 +1,139 @@
+---
+title: Rules Cheat Sheet
+---
+
+Quick reference for Traefik router rules and matchers.
+
+## Host Matchers
+
+```yaml
+# Exact host
+rule: "Host(`example.com`)"
+
+# Multiple hosts
+rule: "Host(`example.com`) || Host(`www.example.com`)"
+
+# Wildcard subdomain
+rule: "Host(`*.example.com`)"
+
+# Regex host (HostRegexp)
+rule: "HostRegexp(`{sub:[a-z]+}.example.com`)"
+
+# Trailing dot (FQDN)
+rule: "Host(`example.com.`)"
+```
+
+## Path Matchers
+
+```yaml
+# Exact path
+rule: "Path(`/api/users`)"
+
+# Path prefix
+rule: "PathPrefix(`/api`)"
+
+# Multiple paths
+rule: "PathPrefix(`/api`) || PathPrefix(`/docs`)"
+
+# Combined with host
+rule: "Host(`api.example.com`) && PathPrefix(`/v2`)"
+```
+
+## Header Matchers
+
+```yaml
+# Exact header
+rule: "Header(`X-Api-Key`, `secret`)"
+
+# Regex header
+rule: "HeaderRegexp(`X-Version`, `v\\d+`)"
+
+# Multiple headers
+rule: "Headers(`Content-Type`, `application/json`, `X-Auth`, `true`)"
+```
+
+## Method Matchers
+
+```yaml
+rule: "Method(`GET`)"
+rule: "Method(`GET`, `POST`, `PUT`)"
+rule: "Method(`POST`) || Method(`PUT`)"
+```
+
+## Query Parameter Matchers
+
+```yaml
+rule: "Query(`page`, `1`)"
+rule: "Query(`format`, `json`)"
+rule: "Query(`version`, `2`)"
+```
+
+## Client IP (v3.0+)
+
+```yaml
+rule: "ClientIP(`10.0.0.0/8`)"
+rule: "ClientIP(`10.0.0.0/8`, `192.168.0.0/16`)"
+rule: "ClientIP(`203.0.113.0/24`)"
+```
+
+## Negation
+
+```yaml
+# Exclude paths
+rule: "Host(`example.com`) && !PathPrefix(`/api`)"
+
+# Exclude methods
+rule: "Host(`example.com`) && !Method(`OPTIONS`)"
+```
+
+## TCP Matchers
+
+```yaml
+tcp:
+  routers:
+    db:
+      rule: "HostSNI(`*`)"
+      rule: "HostSNI(`db.example.com`)"
+      rule: "HostSNI(`*.example.com`)"
+      rule: "HostSNI(`db1.example.com`) || HostSNI(`db2.example.com`)"
+```
+
+## Priority Examples
+
+```yaml
+routers:
+  specific:
+    rule: "Host(`api.example.com`) && PathPrefix(`/v2`)"
+    priority: 10
+    service: api-v2
+
+  catch-all:
+    rule: "Host(`api.example.com`)"
+    priority: 1
+    service: api
+```
+
+## Common Patterns
+
+```yaml
+# API Gateway
+rule: "Host(`api.example.com`) && PathPrefix(`/v1`)"
+
+# Web App
+rule: "Host(`example.com`) || Host(`www.example.com`)"
+
+# Subdomain routing
+rule: "Host(`blog.example.com`)"
+rule: "Host(`app.example.com`)"
+rule: "Host(`admin.example.com`)"
+
+# Path-based routing
+rule: "Host(`example.com`) && PathPrefix(`/blog`)"
+rule: "Host(`example.com`) && PathPrefix(`/shop`)"
+
+# Method-based
+rule: "Host(`api.example.com`) && (Method(`GET`) || Method(`POST`))"
+
+# Multi-tenant
+rule: "HostRegexp(`{tenant:[a-z]+}.example.com`)"
+```

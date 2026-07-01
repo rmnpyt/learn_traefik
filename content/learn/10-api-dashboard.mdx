@@ -1,0 +1,217 @@
+---
+title: API & Dashboard
+chapter: 10
+track: observability
+difficulty: intermediate
+description: Configuring and securing the Traefik API, dashboard, and debug endpoints.
+---
+
+## The Traefik API
+
+Traefik exposes a REST API that provides real-time access to its configuration and health. The API is the backend for the dashboard and can be used for programmatic management.
+
+<Callout variant="info">
+The API is **read-only by default** and only shows the resolved dynamic configuration (what Traefik is actually using). It does NOT modify configuration.
+</Callout>
+
+## Enabling the API
+
+```yaml
+# Static configuration
+api:
+  dashboard: true      # Enables both API and dashboard
+  debug: false         # Enable debug endpoints (more data)
+
+entryPoints:
+  dashboard:
+    address: ":8080"
+```
+
+## Using Internal Services
+
+The API is accessible via the `api@internal` service:
+
+```yaml
+http:
+  routers:
+    dashboard:
+      rule: "Host(`traefik.example.com`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
+      service: api@internal
+      middlewares:
+        - auth
+        - ip-allowlist
+      tls: {}
+```
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/http/routers` | GET | List all HTTP routers |
+| `/api/http/routers/{name}` | GET | Get router details |
+| `/api/http/services` | GET | List all HTTP services |
+| `/api/http/services/{name}` | GET | Get service details |
+| `/api/http/middlewares` | GET | List all middlewares |
+| `/api/http/middlewares/{name}` | GET | Get middleware details |
+| `/api/tcp/routers` | GET | List all TCP routers |
+| `/api/tcp/services` | GET | List all TCP services |
+| `/api/entrypoints` | GET | List all entrypoints |
+| `/api/overview` | GET | Summary overview |
+| `/api/version` | GET | Traefik version info |
+| `/health` | GET | Health check |
+
+### Example: Querying the API
+
+```bash
+# List all HTTP routers
+curl -H "Authorization: Basic $(echo -n admin:password | base64)" \
+  https://traefik.example.com/api/http/routers
+
+# Get specific router
+curl https://traefik.example.com/api/http/routers/api-router@docker
+
+# Configuration overview
+curl https://traefik.example.com/api/overview
+```
+
+## Configuring the Dashboard
+
+```yaml
+api:
+  dashboard: true
+
+entryPoints:
+  dashboard:
+    address: ":8080"
+    http:
+      middlewares:
+        - auth
+        - ip-allowlist
+```
+
+Then secure it with middleware directly on the entrypoint:
+
+```yaml
+http:
+  middlewares:
+    auth:
+      basicAuth:
+        users:
+          - "admin:$2y$05$xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+    ip-allowlist:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+          - "192.168.0.0/16"
+```
+
+<Callout variant="warning" title="Never Expose the Dashboard">
+The dashboard reveals your entire routing topology. Always protect it with at least BasicAuth and an IP allowlist. Never expose it on a public entrypoint without protection.
+</Callout>
+
+## Dashboard in Docker
+
+```yaml
+services:
+  traefik:
+    image: traefik:v3.3
+    command:
+      - "--api.dashboard=true"
+      - "--entrypoints.dashboard.address=:8080"
+    ports:
+      - "8080:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.example.com`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$2y$$05$$xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+## Dashboard in Kubernetes
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: dashboard
+  namespace: traefik
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`traefik.example.com`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))
+      kind: Rule
+      services:
+        - name: api@internal
+          kind: TraefikService
+      middlewares:
+        - name: dashboard-auth
+        - name: dashboard-whitelist
+  tls:
+    certResolver: letsencrypt
+```
+
+## Debug Mode
+
+```yaml
+api:
+  dashboard: true
+  debug: true
+```
+
+Debug mode adds additional endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `/api/debug/pprof/` | Go pprof profiles |
+| `/api/debug/pprof/cmdline` | Command line |
+| `/api/debug/pprof/profile` | CPU profile |
+| `/api/debug/pprof/heap` | Heap profile |
+| `/api/debug/pprof/goroutine` | Goroutine stack traces |
+
+<Callout variant="warning">
+Only enable debug mode temporarily. The pprof endpoints can expose sensitive runtime information.
+</Callout>
+
+## Secure by Default
+
+A production-grade dashboard setup:
+
+```yaml
+entryPoints:
+  dashboard:
+    address: ":8080"
+    http:
+      middlewares:
+        - dashboard-auth@file
+        - dashboard-allowlist@file
+
+http:
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        users:
+          - "admin:$2y$05$xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        realm: "Traefik Dashboard"
+
+    dashboard-allowlist:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+
+routers:
+  dashboard:
+    rule: "Host(`traefik.example.com`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
+    entryPoints:
+      - dashboard
+    service: api@internal
+```
+
+<Callout variant="success" title="Next Chapter">
+Learn about [TCP & UDP Routing](/learn/tcp-udp) for non-HTTP protocols.
+</Callout>
