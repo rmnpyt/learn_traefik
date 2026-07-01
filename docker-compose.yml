@@ -15,6 +15,7 @@ services:
       - proxy
     labels:
       - traefik.enable=true
+      - traefik.docker.network=proxy
       - traefik.http.routers.traefik-learn.rule=Host(`${TRAEFIK_LEARN_DOMAIN}`)
       - traefik.http.routers.traefik-learn.entrypoints=websecure
       - traefik.http.routers.traefik-learn.tls.certresolver=letsencrypt
